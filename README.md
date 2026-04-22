@@ -1,29 +1,35 @@
-# OpenFOAM Campaign v0.2 — Scaffold inicial
+# OpenFOAM Campaign v0.3 — Primeiro Commit
 
-Scaffold inicial de uma aplicação desktop em Python para automação de campanhas paramétricas no OpenFOAM.
+Versão 0.3 do conjunto de códigos para uma interface visual com automatização de parâmetros para simulações no OpenFOAM. 
+
+A elaboração da sintaxe de partes do código, correção de bugs e refinamento do código contaram com o apoio de ferramentas de inteligência artificial generativa, modelo GPT-5.4 Thinking, da OpenAI. A concepção da ferramenta, definição da lógica do programa, testes, correções e a validação final permaneceram sob responsabilidade dos autores.
+
+Criado por Alison Likoski Neves.
+
+Ferramenta não oficial para automação de simulações no OpenFOAM. Não afiliada nem endossada pelos detentores da marca OPENFOAM®
+
+
 
 ## Novidades desta revisão
 
-- ativação de ambiente OpenFOAM por:
-  - nenhum
-  - alias/função do `~/.bashrc`
-  - `source /caminho/.../etc/bashrc`
+- automatização per meio de alteração das variáveis de interesse por: 
+```
+{[of_var:Nome_da_Variavel]}
+```
 - execução interna baseada em três grupos de comandos:
   - setup commands
   - stage/run commands
   - post commands
 - geração de um script temporário por comando
 - log individual por comando em `case_xxx/logs`
-- monitoramento aponta o **log ativo** da run corrente
+- monitoramento da run corrente
 - visualizador de resíduos agora associa cada residual ao arquivo de log da run correspondente
-- suporte básico a reexecução por estágios reaplicando parâmetros via cache de templates
 
 ## Observações
 
-- Em WSL, o padrão automático usa `bash`.
-- Em Windows, o padrão automático usa `wsl bash`.
-- Para alias/função, o runner usa shell interativo.
-- Para `source command`, o runner usa shell não interativo.
+- Testado apenas para Windows WSL, 
+- Testado apenas para a versão OpenFOAM 13 (mas provavelmente deve funcionar em outras versões).
+- Versão ainda não conta com suporte de escolha de versão dentro da interface, em casos de multiplas versões instaladas, realizar o source da versão de interesse antes de rodar o main.py do projeto.
 
 ## Instalação recomendada no WSL
 
@@ -36,4 +42,3 @@ python3 main.py
 ```
 
 
-- Requer `matplotlib` para o gráfico de resíduos na aba Monitoramento.
