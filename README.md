@@ -4,8 +4,6 @@ Versão 0.3 do conjunto de códigos para uma interface visual com automatizaçã
 
 A elaboração da sintaxe de partes do código, correção de bugs e refinamento do código contaram com o apoio de ferramentas de inteligência artificial generativa, modelo GPT-5.4 Thinking, da OpenAI. A concepção da ferramenta, definição da lógica do programa, testes, correções e a validação final permaneceram sob responsabilidade dos autores.
 
-Criado por Alison Likoski Neves.
-
 Ferramenta não oficial para automação de simulações no OpenFOAM. Não afiliada nem endossada pelos detentores da marca OPENFOAM®
 
 
