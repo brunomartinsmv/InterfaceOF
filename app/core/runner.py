@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import signal
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -85,18 +88,15 @@ class Runner:
             log_path = logs_dir / log_name
             script_path = scripts_dir / script_name
 
-            script_lines = ['#!/usr/bin/env bash', 'set -o pipefail']
-            if command.strip().startswith('source '):
-                script_lines.append('set -e')
-            else:
-                script_lines.append('set -e')
+            script_lines = ['#!/usr/bin/env bash', 'set -o pipefail', 'set -e']
             script_lines.extend(self.environment.build_activation_lines(config))
             script_lines.append(command)
             write_text(script_path, '\n'.join(script_lines) + '\n')
             script_path.chmod(0o755)
 
             interactive = self.environment.requires_interactive_shell(config)
-            shell_command = f'bash {self.environment.quote_path(script_path)}'
+            inner_bash = 'bash' if not self.environment.is_native_unix() else shlex.quote(self.environment.resolve_bash())
+            shell_command = f'{inner_bash} {self.environment.quote_path(script_path)}'
             cmd = self.environment.shell_prefix(config, interactive=interactive) + [shell_command]
 
             started_at = datetime.now()
@@ -105,14 +105,16 @@ class Runner:
             if stdout_callback:
                 stdout_callback(f'\n===== [{case_name}] {phase}:{label} -> {log_path.name} =====\n')
 
-            self._process = subprocess.Popen(
-                cmd,
-                cwd=str(case_dir),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
+            popen_kwargs: dict[str, object] = {
+                'cwd': str(case_dir),
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.STDOUT,
+                'text': True,
+                'bufsize': 1,
+            }
+            if os.name != 'nt':
+                popen_kwargs['start_new_session'] = True
+            self._process = subprocess.Popen(cmd, **popen_kwargs)
 
             assert self._process.stdout is not None
             with log_path.open('w', encoding='utf-8') as log_file:
@@ -179,5 +181,13 @@ class Runner:
         return RunnerResult(return_code=overall_return, status=status, raw_log_lines=lines, command_records=command_records)
 
     def stop_case(self) -> None:
-        if self._process and self._process.poll() is None:
-            self._process.terminate()
+        if self._process is None or self._process.poll() is not None:
+            return
+        pid = self._process.pid
+        if os.name != 'nt':
+            try:
+                os.killpg(pid, signal.SIGTERM)
+                return
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        self._process.terminate()

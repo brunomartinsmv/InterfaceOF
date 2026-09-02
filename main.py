@@ -1,3 +1,7 @@
+import os
+
+os.environ.setdefault('MPLBACKEND', 'QtAgg')
+
 from app.gui.main_window import run_app
 
 

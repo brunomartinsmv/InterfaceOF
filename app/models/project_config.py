@@ -39,10 +39,6 @@ class ProjectConfig:
             'default_solver',
             'n_processors',
             'shell_executable',
-            'activation_enabled',
-            'activation_mode',
-            'activation_command',
-            'bashrc_path',
         }
         for key in hidden_keys:
             payload.pop(key, None)
