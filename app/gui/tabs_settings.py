@@ -94,7 +94,7 @@ class SettingsTab(QWidget):
 
     def _initial_probe_hint(self) -> str:
         if self._environment.openfoam_on_path():
-            return 'foamRun já está no PATH deste processo. A ativação é opcional.'
+            return 'O comando de stage já está no PATH deste processo. A ativação é opcional.'
         if self._environment.suggested_activation_command():
             return 'OpenFOAM não está no PATH. Um bashrc foi encontrado; marque a ativação e verifique o ambiente.'
         if self._environment.host_kind() == 'macos':

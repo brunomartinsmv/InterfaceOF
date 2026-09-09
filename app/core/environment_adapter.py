@@ -186,16 +186,21 @@ class EnvironmentAdapter:
             return ''
         return f'source {shlex.quote(str(paths[0]))}'
 
-    def openfoam_on_path(self) -> bool:
-        return shutil.which('foamRun') is not None or shutil.which('simpleFoam') is not None or shutil.which('blockMesh') is not None
+    def openfoam_on_path(self, config: ProjectConfig | None = None) -> bool:
+        config = config or ProjectConfig()
+        return all(
+            shutil.which(command) is not None
+            for command in self._configured_stage_commands(config)
+        )
 
     def probe_openfoam(self, config: ProjectConfig) -> OpenFOAMProbe:
         host = self.host_kind()
         bash = self.resolve_bash()
         stage_commands = self._configured_stage_commands(config)
         script_lines = [
-            'set +e',
+            'set -e',
             *self.build_activation_lines(config),
+            'set +e',
             'printf "WM_PROJECT_VERSION=%s\\n" "${WM_PROJECT_VERSION:-}"',
             'printf "WM_PROJECT_DIR=%s\\n" "${WM_PROJECT_DIR:-}"',
         ]
@@ -214,6 +219,15 @@ class EnvironmentAdapter:
 
         stdout = (completed.stdout or '').strip()
         stderr = (completed.stderr or '').strip()
+        if completed.returncode != 0:
+            if config.activation_enabled:
+                detail = f'Falha ao carregar o ambiente OpenFOAM no host {host}.'
+            else:
+                detail = f'Falha ao executar a verificação do ambiente OpenFOAM no host {host}.'
+            if stderr:
+                detail += f'\n{stderr}'
+            return OpenFOAMProbe(False, host, bash, '', '', '', detail)
+
         stage_paths: dict[int, str] = {}
         version = ''
         project_dir = ''
