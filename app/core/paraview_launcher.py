@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import glob
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Iterable
@@ -13,10 +15,25 @@ class ParaViewLauncher:
         foam_file.touch(exist_ok=True)
         return foam_file
 
+    def resolve_paraview_binary(self) -> str | None:
+        found = shutil.which('paraview')
+        if found:
+            return found
+        apps = sorted(glob.glob('/Applications/ParaView*.app/Contents/MacOS/paraview'), reverse=True)
+        if apps:
+            return apps[0]
+        return None
+
+    def _paraview_command(self, *args: str) -> list[str]:
+        binary = self.resolve_paraview_binary()
+        if not binary:
+            raise FileNotFoundError('Comando paraview não encontrado no PATH nem em /Applications.')
+        return [binary, *args]
+
     def open_case(self, case_dir: Path, foam_file: Path | None = None) -> subprocess.Popen:
         target = foam_file if foam_file is not None else self.ensure_case_foam(case_dir, case_dir.name)
         return subprocess.Popen(
-            ["paraview", f"--data={target}"],
+            self._paraview_command(f'--data={target}'),
             cwd=str(case_dir),
             start_new_session=True,
         )
@@ -70,7 +87,7 @@ class ParaViewLauncher:
     def open_cases_in_single_paraview(self, campaign_dir: Path, foam_files: Iterable[Path]) -> tuple[subprocess.Popen, Path]:
         script_path = self.build_open_many_script(campaign_dir, foam_files)
         proc = subprocess.Popen(
-            ["paraview", f"--script={script_path}"],
+            self._paraview_command(f'--script={script_path}'),
             cwd=str(campaign_dir),
             start_new_session=True,
         )

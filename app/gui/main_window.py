@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -109,7 +108,18 @@ class MainWindow(QMainWindow):
         self.execution_tab.stop_button.clicked.connect(self.stop_case)
         self.execution_tab.open_case_requested.connect(self.open_case_in_paraview)
         self.execution_tab.open_all_requested.connect(self.open_all_cases_in_paraview)
+        self.settings_tab.probe_button.clicked.connect(self.probe_openfoam_environment)
         self._on_tab_changed(self.tabs.currentIndex())
+
+    def _activation_from_settings(self) -> dict[str, str | bool]:
+        command = self.settings_tab.activation_command.text().strip()
+        enabled = self.settings_tab.activation_enabled.isChecked() and bool(command)
+        return {
+            'activation_enabled': enabled,
+            'activation_mode': 'source_command' if enabled else 'none',
+            'activation_command': command,
+            'bashrc_path': '~/.bashrc',
+        }
 
     def _multiline_commands(self, text: str) -> list[str]:
         return [line.strip() for line in text.splitlines() if line.strip()]
@@ -127,10 +137,7 @@ class MainWindow(QMainWindow):
             directory_prefix=self.settings_tab.dir_prefix.text().strip() or 'case_',
             log_prefix=self.settings_tab.log_prefix.text().strip() or 'log_',
             shell_executable='',
-            activation_enabled=False,
-            activation_mode='none',
-            activation_command='',
-            bashrc_path='~/.bashrc',
+            **self._activation_from_settings(),
             internal_setup_commands=self._multiline_commands(self.settings_tab.setup_commands.toPlainText()),
             internal_stage_commands=self._multiline_commands(self.settings_tab.stage_commands.toPlainText()) or ['foamRun'],
             internal_post_commands=self._multiline_commands(self.settings_tab.post_commands.toPlainText()),
@@ -207,7 +214,7 @@ class MainWindow(QMainWindow):
             self.manager.paraview_launcher.open_case(case_dir)
             self.footer_label.setText(f'Abrindo ParaView para {case_name}...')
         except FileNotFoundError:
-            QMessageBox.critical(self, 'ParaView', 'Comando paraview não encontrado no ambiente atual.')
+            QMessageBox.critical(self, 'ParaView', 'ParaView não encontrado no PATH nem em /Applications.')
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, 'ParaView', f'Falha ao abrir {case_name}:\n{exc}')
 
@@ -221,10 +228,25 @@ class MainWindow(QMainWindow):
             _proc, script_path = self.manager.paraview_launcher.open_cases_in_single_paraview(campaign_dir, foam_files)
             self.footer_label.setText(f'Abrindo ParaView com {len(foam_files)} case(s)... Script: {script_path.name}')
         except FileNotFoundError:
-            self.footer_label.setText('Comando paraview não encontrado no ambiente atual.')
+            self.footer_label.setText('ParaView não encontrado no PATH nem em /Applications.')
         except Exception as exc:  # noqa: BLE001
             self.footer_label.setText(f'Falha ao abrir cases em conjunto: {exc}')
             print(f'Falha ao abrir cases em conjunto: {exc}')
+
+    def probe_openfoam_environment(self) -> None:
+        try:
+            if self.settings_tab.activation_enabled.isChecked() and not self.settings_tab.activation_command.text().strip():
+                message = 'Ativação marcada, mas o comando de source está vazio.'
+                self.settings_tab.set_probe_result(message)
+                self.footer_label.setText(message)
+                return
+            config = self.build_config()
+            probe = self.manager.runner.environment.probe_openfoam(config)
+            self.settings_tab.set_probe_result(probe.detail)
+            self.footer_label.setText('OpenFOAM encontrado.' if probe.ok else 'OpenFOAM não encontrado neste ambiente.')
+        except Exception as exc:  # noqa: BLE001
+            self.settings_tab.set_probe_result(str(exc))
+            QMessageBox.critical(self, 'Ambiente OpenFOAM', str(exc))
 
     def _on_run_finished(self, campaign_dir: str) -> None:
         self.execution_tab.apply_case_outputs_from_statuses(self.manager.statuses)
