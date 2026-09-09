@@ -100,7 +100,16 @@ class EnvironmentAdapter:
     def build_environment_prelude(self) -> list[str]:
         if self.host_kind() != 'macos':
             return []
-        return ['export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"']
+        return [
+            'for _interfaceof_path in /opt/homebrew/bin /usr/local/bin; do',
+            '    case ":${PATH:-}:" in',
+            '        *":${_interfaceof_path}:"*) ;;',
+            '        *) PATH="${PATH:+${PATH}:}${_interfaceof_path}" ;;',
+            '    esac',
+            'done',
+            'export PATH',
+            'unset _interfaceof_path',
+        ]
 
     def build_activation_lines(self, config: ProjectConfig) -> list[str]:
         lines = list(self.build_environment_prelude())
@@ -183,14 +192,17 @@ class EnvironmentAdapter:
     def probe_openfoam(self, config: ProjectConfig) -> OpenFOAMProbe:
         host = self.host_kind()
         bash = self.resolve_bash()
+        stage_commands = self._configured_stage_commands(config)
         script_lines = [
             'set +e',
             *self.build_activation_lines(config),
-            'printf "FOAMRUN=%s\\n" "$(command -v foamRun)"',
-            'printf "SIMPLEFOAM=%s\\n" "$(command -v simpleFoam)"',
             'printf "WM_PROJECT_VERSION=%s\\n" "${WM_PROJECT_VERSION:-}"',
             'printf "WM_PROJECT_DIR=%s\\n" "${WM_PROJECT_DIR:-}"',
         ]
+        for index, command in enumerate(stage_commands):
+            script_lines.append(
+                f'printf "STAGE_{index}=%s\\n" "$(command -v {shlex.quote(command)})"'
+            )
         command = '\n'.join(script_lines)
         cmd = self.shell_prefix(config, interactive=self.requires_interactive_shell(config)) + [command]
         try:
@@ -202,32 +214,45 @@ class EnvironmentAdapter:
 
         stdout = (completed.stdout or '').strip()
         stderr = (completed.stderr or '').strip()
-        foam_run = ''
-        simple_foam = ''
+        stage_paths: dict[int, str] = {}
         version = ''
         project_dir = ''
         for line in stdout.splitlines():
-            if line.startswith('FOAMRUN='):
-                foam_run = line.split('=', 1)[1].strip()
-            elif line.startswith('SIMPLEFOAM='):
-                simple_foam = line.split('=', 1)[1].strip()
+            if line.startswith('STAGE_'):
+                key, value = line.split('=', 1)
+                stage_paths[int(key.removeprefix('STAGE_'))] = value.strip()
             elif line.startswith('WM_PROJECT_VERSION='):
                 version = line.split('=', 1)[1].strip()
             elif line.startswith('WM_PROJECT_DIR='):
                 project_dir = line.split('=', 1)[1].strip()
 
-        solver = foam_run or simple_foam
-        ok = bool(solver)
+        missing_commands = [
+            command for index, command in enumerate(stage_commands) if not stage_paths.get(index)
+        ]
+        solver = next((stage_paths[index] for index in range(len(stage_commands)) if stage_paths.get(index)), '')
+        ok = not missing_commands
         if ok:
-            detail = f'solver em {solver}'
+            detail = f'comando(s) de stage encontrado(s): {", ".join(stage_paths.values())}'
             if version:
                 detail += f' (OpenFOAM {version})'
         else:
-            detail = f'Nenhum solver OpenFOAM encontrado no host {host} (foamRun/simpleFoam).'
+            detail = f'Comando(s) de stage não encontrado(s) no host {host}: {", ".join(missing_commands)}.'
             if stderr:
                 detail += f'\n{stderr}'
 
         return OpenFOAMProbe(ok, host, bash, solver, project_dir, version, detail)
+
+    def _configured_stage_commands(self, config: ProjectConfig) -> list[str]:
+        raw_commands = config.internal_stage_commands
+        if isinstance(raw_commands, str):
+            raw_commands = raw_commands.splitlines()
+
+        commands: list[str] = []
+        for raw_command in raw_commands or ['foamRun']:
+            tokens = shlex.split(str(raw_command).strip())
+            if tokens and tokens[0] not in commands:
+                commands.append(tokens[0])
+        return commands or ['foamRun']
 
     def sanitize_label(self, text: str) -> str:
         cleaned = ''.join(ch if ch.isalnum() or ch in {'_', '-'} else '_' for ch in text.strip())
