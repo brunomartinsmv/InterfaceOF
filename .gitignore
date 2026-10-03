@@ -3,9 +3,3 @@ __pycache__/
 .venv/
 venv/
 output/
-
-# gemini-cli settings
-.gemini/
-
-# GitHub App credentials
-gha-creds-*.json
