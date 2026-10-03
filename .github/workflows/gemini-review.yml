@@ -25,6 +25,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
+          echo "GEMINI_REVIEW_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           if [ -z "$GEMINI_API_KEY" ]; then
             echo "::error::Cadastre o secret GEMINI_API_KEY em Settings > Secrets and variables > Actions."
             exit 1
@@ -38,12 +39,14 @@ jobs:
           lfs: false
 
       - name: Run Gemini CLI
+        id: gemini
         uses: google-github-actions/run-gemini-cli@v0.1.22
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GEMINI_CLI_TRUST_WORKSPACE: "true"
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          gemini_model: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash' }}
           github_pr_number: ${{ github.event.pull_request.number }}
           settings: |
             {
@@ -85,3 +88,19 @@ jobs:
             inline com add_comment_to_pending_review e envie a revisão com evento COMMENT.
             Nunca use APPROVE ou REQUEST_CHANGES. Não altere arquivos nem faça merge.
             Se não encontrar problemas, diga isso e informe os limites da análise.
+
+      - name: Confirmar publicação do review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GEMINI_SUMMARY: ${{ steps.gemini.outputs.summary }}
+        run: |
+          count=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" |
+            jq -s --arg start "$GEMINI_REVIEW_STARTED_AT"               '[.[][] | select(.user.login == "github-actions[bot]" and
+                .state == "COMMENTED" and .submitted_at >= $start)] | length')
+          if [ "$count" -eq 0 ]; then
+            echo "::error::Gemini terminou sem publicar uma revisão no PR."
+            printf '%s\n' "$GEMINI_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
