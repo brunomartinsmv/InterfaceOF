@@ -82,6 +82,8 @@ class ExecutionTab(QWidget):
         self.console.moveCursor(QTextCursor.End)
 
     def populate_queue(self, cases: list) -> None:
+        self.case_outputs.clear()
+        self.open_all_button.setEnabled(False)
         self.queue_table.setRowCount(len(cases))
         for row, case in enumerate(cases):
             self.queue_table.setItem(row, 0, QTableWidgetItem(case.case_name))
@@ -102,6 +104,7 @@ class ExecutionTab(QWidget):
                 break
 
     def reset_statuses(self) -> None:
+        self.case_outputs.clear()
         for row in range(self.queue_table.rowCount()):
             self.queue_table.setItem(row, self.STATUS_COLUMN, QTableWidgetItem('queued'))
             widget = self.queue_table.cellWidget(row, 4)
@@ -110,6 +113,7 @@ class ExecutionTab(QWidget):
         self.open_all_button.setEnabled(False)
 
     def apply_case_outputs_from_statuses(self, statuses: list) -> None:
+        self.case_outputs.clear()
         for st in statuses:
             self.case_outputs[st.case_name] = {
                 'case_dir': st.metrics.get('case_dir', ''),
