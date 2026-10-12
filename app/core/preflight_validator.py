@@ -69,11 +69,16 @@ class PreflightValidator:
             report.audit_rows.append(VariableAuditRow(marker.variable, str(marker.file_path), marker.line_number,
                                                       status, 'marcador_no_caso'))
 
-        for case_name, missing_vars in sorted(missing_by_case.items()):
-            for var in sorted(missing_vars):
-                report.issues.append(
-                    ValidationIssue('error', f'Marcador sem valor inicial no caso {case_name!r}: {var}')
-                )
+        if not all_cases:
+            report.issues.append(ValidationIssue('error', 'Nenhum caso definido no arquivo CSV primário.'))
+            for var in sorted(marker_names):
+                report.issues.append(ValidationIssue('error', f'Marcador sem valor correspondente nos CSVs: {var}'))
+        else:
+            for case_name, missing_vars in sorted(missing_by_case.items()):
+                for var in sorted(missing_vars):
+                    report.issues.append(
+                        ValidationIssue('error', f'Marcador sem valor inicial no caso {case_name!r}: {var}')
+                    )
 
         extras = sorted(all_supplied - marker_names)
         for name in extras:

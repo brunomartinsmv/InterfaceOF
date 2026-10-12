@@ -258,7 +258,7 @@ class Runner:
             status_callback(status)
         return RunnerResult(return_code=overall_return, status=status, raw_log_lines=lines, command_records=command_records)
 
-    def stop_case(self, wait_timeout: float = 3.0) -> None:
+    def stop_case(self, wait_timeout: float = 3.0, *, blocking: bool = False) -> None:
         with self._lock:
             self._interrupted = True
             proc = self._process
@@ -266,11 +266,17 @@ class Runner:
                 return
             self._kill_process_tree(proc, force=False)
 
-        try:
-            proc.wait(timeout=wait_timeout)
-        except (subprocess.TimeoutExpired, Exception):
-            self._kill_process_tree(proc, force=True)
+        def _escalate() -> None:
             try:
-                proc.wait(timeout=1.0)
-            except Exception:
-                pass
+                proc.wait(timeout=wait_timeout)
+            except (subprocess.TimeoutExpired, Exception):
+                self._kill_process_tree(proc, force=True)
+                try:
+                    proc.wait(timeout=1.0)
+                except Exception:
+                    pass
+
+        if blocking:
+            _escalate()
+        else:
+            threading.Thread(target=_escalate, daemon=True).start()

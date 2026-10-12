@@ -311,7 +311,11 @@ class CampaignManager:
                     case_status.error_type = result.status.error_type
                     case_status.error_message = result.status.error_message
                 if result.status.last_simulated_time is not None:
-                    case_status.last_simulated_time = max(case_status.last_simulated_time or 0.0, result.status.last_simulated_time)
+                    case_status.last_simulated_time = (
+                        result.status.last_simulated_time
+                        if case_status.last_simulated_time is None
+                        else max(case_status.last_simulated_time, result.status.last_simulated_time)
+                    )
 
             executed_stages_count = 0
             if case_status.status == 'running' and not self.runner.is_interrupted and case.stages:
@@ -334,7 +338,11 @@ class CampaignManager:
                     case_status.error_type = stage_status.error_type
                     case_status.error_message = stage_status.error_message
                 if stage_status is not None and stage_status.last_simulated_time is not None:
-                    case_status.last_simulated_time = max(case_status.last_simulated_time or 0.0, stage_status.last_simulated_time)
+                    case_status.last_simulated_time = (
+                        stage_status.last_simulated_time
+                        if case_status.last_simulated_time is None
+                        else max(case_status.last_simulated_time, stage_status.last_simulated_time)
+                    )
 
             if case_status.status == 'running' and not self.runner.is_interrupted and runner_mode != 'allrun':
                 post_sequence = self._build_post_sequence(case, config)
@@ -359,7 +367,11 @@ class CampaignManager:
 
             latest_detected = detect_latest_time(built.case_dir)
             if latest_detected is not None:
-                case_status.last_simulated_time = max(case_status.last_simulated_time or 0.0, latest_detected)
+                case_status.last_simulated_time = (
+                    latest_detected
+                    if case_status.last_simulated_time is None
+                    else max(case_status.last_simulated_time, latest_detected)
+                )
 
             case_status.end_time = datetime.now()
             if self.runner.is_interrupted:

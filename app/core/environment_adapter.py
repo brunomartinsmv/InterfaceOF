@@ -74,13 +74,13 @@ class EnvironmentAdapter:
         system = self.host_kind()
         shell_flag = '-ic' if interactive else '-c'
 
-        if system == 'macos':
-            return [self.resolve_bash(), shell_flag]
-
-        if system == 'linux':
-            return [self.resolve_bash(), shell_flag]
-
         shell = (getattr(config, 'shell_executable', None) or getattr(config, 'custom_shell', None) or '').strip()
+
+        if system in {'macos', 'linux'}:
+            if shell:
+                tokens = shlex.split(shell)
+                return tokens + [shell_flag]
+            return [self.resolve_bash(), shell_flag]
         if system == 'wsl':
             if not shell:
                 return [self.resolve_bash(), shell_flag]

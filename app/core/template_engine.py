@@ -14,7 +14,7 @@ CACHE_DIRNAME = '.of_campaign_templates'
 MANIFEST_NAME = 'manifest.json'
 
 COMMENT_OR_MARKER_RE = re.compile(
-    r'(/\*.*?\*/)|(//[^\n]*)|(\{\[of_var:([a-z0-9_]+)\]\})',
+    r'("(?:\\.|[^"\\])*")|(/\*.*?\*/)|(//[^\n]*)|(\{\[of_var:([a-z0-9_]+)\]\})',
     flags=re.DOTALL
 )
 
@@ -62,14 +62,25 @@ class TemplateEngine:
 
             def _replace_match(match: re.Match[str]) -> str:
                 nonlocal local_changes
-                block_comment = match.group(1)
-                line_comment = match.group(2)
+                quoted_str = match.group(1)
+                block_comment = match.group(2)
+                line_comment = match.group(3)
+                if quoted_str is not None:
+                    def _rep_quoted(m: re.Match[str]) -> str:
+                        nonlocal local_changes
+                        var = m.group(1)
+                        if var in normalized:
+                            local_changes += 1
+                            return normalized[var]
+                        return m.group(0)
+                    return ANY_MARKER_RE.sub(_rep_quoted, quoted_str)
+
                 if block_comment is not None:
                     return block_comment
                 if line_comment is not None:
                     return line_comment
 
-                var_name = match.group(4)
+                var_name = match.group(5)
                 if var_name in normalized:
                     local_changes += 1
                     return normalized[var_name]

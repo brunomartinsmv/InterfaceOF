@@ -243,3 +243,82 @@ def test_monitor_tab_previews_cached_timestep_in_iteration_mode():
     preview = monitor._preview_point("Ux")
     assert preview is not None
     assert preview[1] == 0.05
+
+
+def test_environment_adapter_honors_shell_executable_on_native_unix():
+    adapter = EnvironmentAdapter()
+    config = ProjectConfig(shell_executable="/custom/bin/bash")
+    prefix = adapter.shell_prefix(config)
+    assert prefix == ["/custom/bin/bash", "-c"]
+
+
+def test_template_engine_replaces_marker_inside_quoted_url_with_slashes():
+    from app.core.template_engine import TemplateEngine
+    from app.core.marker_scanner import MarkerScanner, strip_comments
+    engine = TemplateEngine()
+    scanner = MarkerScanner()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        case_dir = Path(tmpdir)
+        test_file = case_dir / "system" / "controlDict"
+        test_file.parent.mkdir(parents=True)
+        raw_content = """endpoint \"https://host/{[of_var:case_id]}\"; // trailing comment\n// {[of_var:commented]}\n"""
+        test_file.write_text(raw_content, encoding="utf-8")
+
+        # Verify strip_comments keeps the quoted url
+        cleaned = strip_comments(raw_content)
+        assert "https://host/{[of_var:case_id]}" in cleaned
+        assert "commented" not in cleaned
+
+        engine.prepare_case_templates(case_dir)
+        summary = engine.apply_parameters(case_dir, {"case_id": "test1234"})
+        assert summary.replaced_count == 1
+        res_text = test_file.read_text(encoding="utf-8")
+        assert "https://host/test1234" in res_text
+
+
+def test_preflight_validator_rejects_empty_cases_list():
+    validator = PreflightValidator()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        case_dir = Path(tmpdir)
+        dict_file = case_dir / "system" / "controlDict"
+        dict_file.parent.mkdir(parents=True)
+        dict_file.write_text("param {[of_var:my_var]};", encoding="utf-8")
+        loaded = LoadedParameters(cases=[], primary_df=None, secondary_df=None, normalized_primary_columns={})
+        report = validator.validate(case_dir, loaded)
+        assert report.ok is False
+        assert any("Nenhum caso definido" in issue.message for issue in report.issues)
+
+
+def test_runner_stop_case_nonblocking():
+    runner = Runner()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        case_dir = Path(tmpdir)
+        (case_dir / "logs").mkdir()
+        config = ProjectConfig()
+        import time
+        # Run a long sleep command in a thread
+        import threading
+        cmd_seq = [{"phase": "run", "label": "sleepCmd", "command": "sleep 10"}]
+        t = threading.Thread(target=runner.run_command_sequence, args=(case_dir, cmd_seq, config, "case_test"))
+        t.start()
+        time.sleep(0.3)
+        # Calling stop_case should be non-blocking and return quickly
+        start_t = time.time()
+        runner.stop_case(wait_timeout=3.0, blocking=False)
+        duration = time.time() - start_t
+        assert duration < 1.0
+        t.join(timeout=5.0)
+
+
+def test_campaign_manager_preserves_negative_last_simulated_time():
+    manager = CampaignManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        case_dir = Path(tmpdir)
+        (case_dir / "logs").mkdir()
+        config = ProjectConfig()
+        # Solver output with negative time
+        log_content = "Time = -2.0\nTime = -1.0\nExecutionTime = 1 s  ClockTime = 1 s\nEnd\n"
+        cmd = f"echo '{log_content}' && exit 0"
+        cmd_seq = [{"phase": "run", "label": "negTime", "command": cmd}]
+        res = manager.runner.run_command_sequence(case_dir, cmd_seq, config, "case_test")
+        assert res.status.last_simulated_time == -1.0

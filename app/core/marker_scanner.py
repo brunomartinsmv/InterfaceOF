@@ -7,19 +7,22 @@ from pathlib import Path
 from app.utils.normalizer import ensure_valid_token
 
 MARKER_RE = re.compile(r"\{\[of_var:([a-z0-9_]+)\]\}")
-BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", flags=re.DOTALL)
-LINE_COMMENT_RE = re.compile(r"//.*$")
+C_TOKEN_RE = re.compile(r"(\"(?:\\.|[^\"\\\\])*\")|(/\*.*?\*/)|(//[^\n]*)", flags=re.DOTALL)
 
 
 def strip_comments(text: str) -> str:
-    """Remove comentários C/C++ (// e /* */) preservando as quebras de linha para manter a numeração."""
-    def _preserve_newlines(match: re.Match[str]) -> str:
-        return re.sub(r'[^\n]', ' ', match.group(0))
+    """Remove comentarios C/C++ (// e /* */) preservando quebras de linha e strings entre aspas."""
+    def _rep(match: re.Match[str]) -> str:
+        string_literal = match.group(1)
+        if string_literal is not None:
+            return string_literal
+        block_comment = match.group(2)
+        if block_comment is not None:
+            return re.sub(r"[^\n]", " ", block_comment)
+        line_comment = match.group(3)
+        return " " * len(line_comment)
 
-    text = BLOCK_COMMENT_RE.sub(_preserve_newlines, text)
-    cleaned_lines = [LINE_COMMENT_RE.sub('', line) for line in text.splitlines()]
-    return '\n'.join(cleaned_lines)
-
+    return C_TOKEN_RE.sub(_rep, text)
 
 @dataclass(slots=True)
 class MarkerOccurrence:
