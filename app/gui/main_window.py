@@ -107,8 +107,8 @@ class MainWindow(QMainWindow):
         self.project_tab.validate_button.clicked.connect(self.validate_project)
         self.execution_tab.run_button.clicked.connect(self.run_campaign)
         self.execution_tab.stop_button.clicked.connect(self.stop_case)
-        self.execution_tab.open_paraview_requested.connect(self.open_case_in_paraview)
-        self.execution_tab.open_all_paraview_requested.connect(self.open_all_cases_in_paraview)
+        self.execution_tab.open_case_requested.connect(self.open_case_in_paraview)
+        self.execution_tab.open_all_requested.connect(self.open_all_cases_in_paraview)
         self.settings_tab.probe_button.clicked.connect(self.probe_openfoam_environment)
 
         self._apply_suggested_activation_if_empty()
@@ -129,7 +129,6 @@ class MainWindow(QMainWindow):
             if suggested:
                 self.settings_tab.activation_command.setText(suggested)
                 self.settings_tab.activation_enabled.setChecked(True)
-                self.settings_tab.activation_mode.setCurrentText('source_command')
 
     def _multiline_commands(self, text: str) -> list[str]:
         return [line.strip() for line in text.splitlines() if line.strip()]
@@ -141,11 +140,11 @@ class MainWindow(QMainWindow):
             secondary_csv=Path(self.project_tab.secondary_csv_edit.text().strip()) if self.project_tab.secondary_csv_edit.text().strip() else None,
             output_dir=Path(self.project_tab.output_dir_edit.text().strip()) if self.project_tab.output_dir_edit.text().strip() else None,
             runner_mode=self.settings_tab.runner_mode.currentText().strip() or 'internal',
-            custom_shell=self.settings_tab.custom_shell.text().strip(),
+            directory_prefix=self.settings_tab.dir_prefix.text().strip() or 'case_',
+            log_prefix=self.settings_tab.log_prefix.text().strip() or 'log_',
             activation_enabled=self.settings_tab.activation_enabled.isChecked(),
-            activation_mode=self.settings_tab.activation_mode.currentText().strip(),
+            activation_mode='source_command' if self.settings_tab.activation_enabled.isChecked() else 'none',
             activation_command=self.settings_tab.activation_command.text().strip(),
-            bashrc_path=self.settings_tab.bashrc_path.text().strip(),
             internal_setup_commands=self._multiline_commands(self.settings_tab.setup_commands.toPlainText()),
             internal_stage_commands=self._multiline_commands(self.settings_tab.stage_commands.toPlainText()) or ['foamRun'],
             internal_post_commands=self._multiline_commands(self.settings_tab.post_commands.toPlainText()),

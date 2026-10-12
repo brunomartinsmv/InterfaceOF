@@ -22,6 +22,26 @@ from app.utils.file_ops import ensure_dir, write_json
 from app.utils.paths import build_campaign_paths
 
 
+def read_controldict_endtime(case_dir: Path) -> float | None:
+    """Lê o endTime ativo de system/controlDict sem interpretar comentários."""
+    control_dict = case_dir / 'system' / 'controlDict'
+    if not control_dict.is_file():
+        return None
+    try:
+        content = control_dict.read_text(encoding='utf-8')
+    except OSError:
+        return None
+    comment_re = re.compile(r'(/\*.*?\*/|//[^\n]*)', flags=re.DOTALL)
+    clean = comment_re.sub('', content)
+    match = re.search(r'^\s*endTime\s+([^;]+);', clean, flags=re.MULTILINE)
+    if match:
+        try:
+            return float(match.group(1).strip())
+        except ValueError:
+            return None
+    return None
+
+
 def update_controldict_for_stage(case_dir: Path, target_time: float, start_from_latest: bool = True) -> bool:
     """Ajusta endTime, stopAt e startFrom em system/controlDict sem alterar comentários."""
     control_dict = case_dir / 'system' / 'controlDict'
@@ -371,6 +391,14 @@ class CampaignManager:
         executed_stages = 0
         total_substitutions = 0
 
+        # Obter o endTime final pretendido (seja de template_parameters['end_time'] ou do controlDict inicial)
+        final_target = read_controldict_endtime(case_dir)
+        if 'end_time' in case.template_parameters:
+            try:
+                final_target = float(case.template_parameters['end_time'])
+            except (ValueError, TypeError):
+                pass
+
         # Intervalo inicial: executa com parâmetros iniciais até stages[0].target_time
         initial_target = stages[0].target_time
         if not update_controldict_for_stage(case_dir, target_time=initial_target, start_from_latest=False):
@@ -413,8 +441,7 @@ class CampaignManager:
             if idx + 1 < len(stages):
                 next_target = stages[idx + 1].target_time
             else:
-                primary_end = float(case.template_parameters.get('end_time', 0.0)) if 'end_time' in case.template_parameters else 0.0
-                next_target = primary_end if primary_end > stage.target_time else None
+                next_target = final_target if (final_target is not None and final_target > stage.target_time) else None
 
             if next_target is not None and next_target > stage.target_time:
                 if not update_controldict_for_stage(case_dir, target_time=next_target, start_from_latest=True):
@@ -476,10 +503,41 @@ class CampaignManager:
         if case and 'cfg__solver' in case.config_parameters:
             solver_override = str(case.config_parameters['cfg__solver']).strip()
             if solver_override:
-                if commands:
-                    known_solvers = {'foamRun', 'simpleFoam', 'pimpleFoam', 'interFoam', 'icoFoam', 'rhoPimpleFoam'}
-                    return [solver_override if cmd in known_solvers else cmd for cmd in commands]
-                return [solver_override]
+                if not commands:
+                    return [solver_override]
+                known_solvers = {'foamRun', 'simpleFoam', 'pimpleFoam', 'interFoam', 'icoFoam', 'rhoPimpleFoam', 'buoyantPimpleFoam'}
+                updated: list[str] = []
+                replaced = False
+                for cmd in commands:
+                    tokens = cmd.split()
+                    if not tokens:
+                        continue
+                    new_tokens: list[str] = []
+                    line_replaced = False
+                    for tok in tokens:
+                        if tok in known_solvers and not line_replaced:
+                            new_tokens.append(solver_override)
+                            line_replaced = True
+                            replaced = True
+                        else:
+                            new_tokens.append(tok)
+                    if line_replaced:
+                        updated.append(' '.join(new_tokens))
+                    else:
+                        updated.append(cmd)
+
+                if not replaced:
+                    if len(commands) == 1:
+                        tokens = commands[0].split()
+                        return [' '.join([solver_override] + tokens[1:])]
+                    aux_tools = {'blockMesh', 'checkMesh', 'decomposePar', 'reconstructPar', 'setFields', 'snappyHexMesh'}
+                    for i, cmd in enumerate(commands):
+                        tokens = cmd.split()
+                        if tokens and tokens[0] not in aux_tools:
+                            commands[i] = ' '.join([solver_override] + tokens[1:])
+                            return commands
+                    return [solver_override]
+                return updated
         return commands if commands else ['foamRun']
 
     def _parse_commands(self, commands: list[str] | str) -> list[str]:
@@ -497,6 +555,7 @@ class CampaignManager:
         interrupted = sum(1 for s in self.statuses if s.status == 'interrupted')
         wall_times = [float(s.metrics.get('wall_clock_seconds', 0.0)) for s in self.statuses]
         planned_stages = sum(len(c.stages) for c in self.loaded_parameters.cases) if self.loaded_parameters else stages_total
+        executed_cases_count = len(self.statuses)
 
         return {
             'total_cases': total_cases,
@@ -504,7 +563,7 @@ class CampaignManager:
             'error_cases': errors,
             'interrupted_cases': interrupted,
             'campaign_wall_clock_seconds_total': sum(wall_times),
-            'campaign_wall_clock_seconds_mean': (sum(wall_times) / total_cases) if total_cases else 0.0,
+            'campaign_wall_clock_seconds_mean': (sum(wall_times) / executed_cases_count) if executed_cases_count else 0.0,
             'total_stages': planned_stages,
             'total_executed_stages': stages_total,
             'total_changes': changes_total,

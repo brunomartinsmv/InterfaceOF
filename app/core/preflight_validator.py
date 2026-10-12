@@ -45,7 +45,6 @@ class PreflightValidator:
         marker_names = {m.variable for m in markers}
         all_cases = loaded.cases
 
-        # Validação por caso individual para garantir que nenhum caso fique sem parâmetros
         missing_by_case: dict[str, set[str]] = {}
         for case in all_cases:
             case_vars = set(case.template_parameters.keys())
@@ -63,12 +62,13 @@ class PreflightValidator:
         all_supplied = all_primary | all_secondary
 
         for marker in markers:
-            is_globally_missing = bool(missing_by_case)
-            status = 'faltando_no_csv' if marker.variable not in all_primary else 'ok'
+            is_missing_in_any_case = not all_cases or any(
+                marker.variable not in case.template_parameters for case in all_cases
+            )
+            status = 'faltando_no_csv' if is_missing_in_any_case else 'ok'
             report.audit_rows.append(VariableAuditRow(marker.variable, str(marker.file_path), marker.line_number,
                                                       status, 'marcador_no_caso'))
 
-        # Reportar erros por caso se algum caso estiver incompleto
         for case_name, missing_vars in sorted(missing_by_case.items()):
             for var in sorted(missing_vars):
                 report.issues.append(
