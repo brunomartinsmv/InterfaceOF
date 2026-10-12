@@ -32,8 +32,12 @@ def read_controldict_endtime(case_dir: Path) -> float | None:
     except OSError:
         return None
     comment_re = re.compile(r'(/\*.*?\*/|//[^\n]*)', flags=re.DOTALL)
-    clean = comment_re.sub('', content)
-    match = re.search(r'^\s*endTime\s+([^;]+);', clean, flags=re.MULTILINE)
+
+    def _mask_comment(m: re.Match) -> str:
+        return ''.join('\n' if c == '\n' else ' ' for c in m.group(0))
+
+    clean = comment_re.sub(_mask_comment, content)
+    match = re.search(r'(?m)^\s*endTime\b\s*([^;]+);', clean)
     if match:
         try:
             return float(match.group(1).strip())
@@ -53,51 +57,44 @@ def update_controldict_for_stage(case_dir: Path, target_time: float, start_from_
         return False
 
     comment_re = re.compile(r'(/\*.*?\*/|//[^\n]*)', flags=re.DOTALL)
-    tokens: list[tuple[str, str]] = []
-    last_end = 0
-    for match in comment_re.finditer(content):
-        if match.start() > last_end:
-            tokens.append(('code', content[last_end:match.start()]))
-        tokens.append(('comment', match.group(0)))
-        last_end = match.end()
-    if last_end < len(content):
-        tokens.append(('code', content[last_end:]))
 
-    end_time_found = False
-    stop_at_found = False
-    start_from_found = False
+    def _mask_comment(m: re.Match) -> str:
+        return ''.join('\n' if c == '\n' else ' ' for c in m.group(0))
 
-    new_tokens: list[str] = []
-    for kind, val in tokens:
-        if kind == 'comment':
-            new_tokens.append(val)
-            continue
-        new_val = val
-        if re.search(r'^\s*endTime\s+[^;]+;', new_val, flags=re.MULTILINE):
-            new_val = re.sub(r'^\s*endTime\s+[^;]+;', f'endTime         {target_time};', new_val, flags=re.MULTILINE)
-            end_time_found = True
-        if re.search(r'^\s*stopAt\s+[^;]+;', new_val, flags=re.MULTILINE):
-            new_val = re.sub(r'^\s*stopAt\s+[^;]+;', 'stopAt          endTime;', new_val, flags=re.MULTILINE)
-            stop_at_found = True
-        if start_from_latest and re.search(r'^\s*startFrom\s+[^;]+;', new_val, flags=re.MULTILINE):
-            new_val = re.sub(r'^\s*startFrom\s+[^;]+;', 'startFrom       latestTime;', new_val, flags=re.MULTILINE)
-            start_from_found = True
-        new_tokens.append(new_val)
+    masked = comment_re.sub(_mask_comment, content)
 
-    assembled = ''.join(new_tokens)
+    replacements: list[tuple[int, int, str]] = []
+
+    m_end = re.search(r'(?m)^\s*endTime\b[^;]*;', masked)
+    if m_end:
+        replacements.append((m_end.start(), m_end.end(), f'endTime         {target_time};'))
+
+    m_stop = re.search(r'(?m)^\s*stopAt\b[^;]*;', masked)
+    if m_stop:
+        replacements.append((m_stop.start(), m_stop.end(), 'stopAt          endTime;'))
+
+    m_start = re.search(r'(?m)^\s*startFrom\b[^;]*;', masked)
+    if start_from_latest and m_start:
+        replacements.append((m_start.start(), m_start.end(), 'startFrom       latestTime;'))
+
+    replacements.sort(key=lambda r: r[0], reverse=True)
+    res = content
+    for start, end, new_text in replacements:
+        res = res[:start] + new_text + res[end:]
+
     extra_lines: list[str] = []
-    if not end_time_found:
+    if not m_end:
         extra_lines.append(f'endTime         {target_time};')
-    if not stop_at_found:
+    if not m_stop:
         extra_lines.append('stopAt          endTime;')
-    if start_from_latest and not start_from_found:
+    if start_from_latest and not m_start:
         extra_lines.append('startFrom       latestTime;')
 
     if extra_lines:
-        assembled += '\n' + '\n'.join(extra_lines) + '\n'
+        res += '\n' + '\n'.join(extra_lines) + '\n'
 
     try:
-        control_dict.write_text(assembled, encoding='utf-8')
+        control_dict.write_text(res, encoding='utf-8')
         return True
     except OSError:
         return False
@@ -129,6 +126,38 @@ def detect_latest_time(case_dir: Path) -> float | None:
         pass
 
     return max(times) if times else None
+
+
+def _replace_solver_in_command(cmd: str, solver_override: str) -> str:
+    tokens = cmd.split()
+    if not tokens:
+        return solver_override
+
+    known_solvers = {'foamRun', 'simpleFoam', 'pimpleFoam', 'interFoam', 'icoFoam', 'rhoPimpleFoam', 'buoyantPimpleFoam'}
+    for i, tok in enumerate(tokens):
+        if tok in known_solvers:
+            tokens[i] = solver_override
+            return ' '.join(tokens)
+
+    wrappers = {'mpirun', 'mpiexec', 'srun', 'runApplication', 'runParallel'}
+    wrapper_flags_with_val = {'-np', '-n', '-N', '--hostfile', '-machinefile'}
+
+    if tokens[0] in wrappers:
+        idx = 1
+        while idx < len(tokens):
+            tok = tokens[idx]
+            if tok in wrapper_flags_with_val:
+                idx += 2
+            elif tok.startswith('-'):
+                idx += 1
+            else:
+                tokens[idx] = solver_override
+                return ' '.join(tokens)
+        tokens.append(solver_override)
+        return ' '.join(tokens)
+
+    tokens[0] = solver_override
+    return ' '.join(tokens)
 
 
 class CampaignManager:
@@ -522,38 +551,33 @@ class CampaignManager:
                 if not commands:
                     return [solver_override]
                 known_solvers = {'foamRun', 'simpleFoam', 'pimpleFoam', 'interFoam', 'icoFoam', 'rhoPimpleFoam', 'buoyantPimpleFoam'}
+                aux_tools = {'blockMesh', 'checkMesh', 'decomposePar', 'reconstructPar', 'setFields', 'snappyHexMesh'}
+
                 updated: list[str] = []
                 replaced = False
                 for cmd in commands:
-                    tokens = cmd.split()
-                    if not tokens:
-                        continue
-                    new_tokens: list[str] = []
-                    line_replaced = False
-                    for tok in tokens:
-                        if tok in known_solvers and not line_replaced:
-                            new_tokens.append(solver_override)
-                            line_replaced = True
-                            replaced = True
-                        else:
-                            new_tokens.append(tok)
-                    if line_replaced:
-                        updated.append(' '.join(new_tokens))
+                    if not replaced and any(tok in known_solvers for tok in cmd.split()):
+                        updated.append(_replace_solver_in_command(cmd, solver_override))
+                        replaced = True
                     else:
                         updated.append(cmd)
 
-                if not replaced:
-                    if len(commands) == 1:
-                        tokens = commands[0].split()
-                        return [' '.join([solver_override] + tokens[1:])]
-                    aux_tools = {'blockMesh', 'checkMesh', 'decomposePar', 'reconstructPar', 'setFields', 'snappyHexMesh'}
-                    for i, cmd in enumerate(commands):
-                        tokens = cmd.split()
-                        if tokens and tokens[0] not in aux_tools:
-                            commands[i] = ' '.join([solver_override] + tokens[1:])
-                            return commands
-                    return [solver_override]
-                return updated
+                if replaced:
+                    return updated
+
+                updated = []
+                for cmd in commands:
+                    tokens = cmd.split()
+                    if not replaced and tokens and tokens[0] not in aux_tools:
+                        updated.append(_replace_solver_in_command(cmd, solver_override))
+                        replaced = True
+                    else:
+                        updated.append(cmd)
+
+                if replaced:
+                    return updated
+
+                return commands + [solver_override]
         return commands if commands else ['foamRun']
 
     def _parse_commands(self, commands: list[str] | str) -> list[str]:

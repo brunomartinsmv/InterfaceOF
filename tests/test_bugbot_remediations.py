@@ -3,8 +3,9 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from app.core.campaign_manager import CampaignManager, read_controldict_endtime
-from app.core.parameter_loader import LoadedParameters
+from app.core.campaign_manager import CampaignManager, read_controldict_endtime, update_controldict_for_stage
+from app.core.environment_adapter import EnvironmentAdapter
+from app.core.parameter_loader import LoadedParameters, ParameterLoader
 from app.core.preflight_validator import PreflightReport, PreflightValidator
 from app.models.case_definition import CaseDefinition
 from app.models.project_config import ProjectConfig
@@ -27,6 +28,26 @@ def test_read_controldict_endtime():
         assert read_controldict_endtime(case_dir) == 5.5
 
 
+def test_controldict_inline_comment_handling():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        case_dir = Path(tmpdir)
+        sys_dir = case_dir / "system"
+        sys_dir.mkdir(parents=True)
+        cd = sys_dir / "controlDict"
+        cd.write_text(
+            "/* header */\n"
+            "endTime /* inline comment */ 10.0;\n"
+            "stopAt /* inline */ endTime;\n",
+            encoding="utf-8"
+        )
+        assert read_controldict_endtime(case_dir) == 10.0
+        assert update_controldict_for_stage(case_dir, target_time=25.0, start_from_latest=True) is True
+        content = cd.read_text(encoding="utf-8")
+        assert "endTime         25.0;" in content
+        # ensure no duplicate endTime was appended
+        assert content.count("endTime") == 2  # one in endTime directive, one in stopAt endTime
+
+
 def test_solver_override_with_arguments():
     manager = CampaignManager()
     config = ProjectConfig(internal_stage_commands=["foamRun -parallel", "reconstructPar"])
@@ -37,6 +58,53 @@ def test_solver_override_with_arguments():
     )
     cmds = manager._stage_commands(case, config)
     assert cmds == ["interFoam -parallel", "reconstructPar"]
+
+
+def test_solver_override_preserves_wrappers():
+    manager = CampaignManager()
+    config = ProjectConfig(internal_stage_commands=["mpirun -np 4 customSolver -parallel", "reconstructPar"])
+    case = CaseDefinition(
+        case_name="case_001",
+        template_parameters={},
+        config_parameters={"cfg__solver": "interFoam"},
+    )
+    cmds = manager._stage_commands(case, config)
+    assert cmds == ["mpirun -np 4 interFoam -parallel", "reconstructPar"]
+
+    # Test runApplication wrapper
+    config2 = ProjectConfig(internal_stage_commands=["runApplication customSolver"])
+    cmds2 = manager._stage_commands(case, config2)
+    assert cmds2 == ["runApplication interFoam"]
+
+
+def test_secondary_events_merged_across_whitespace_case_names():
+    loader = ParameterLoader()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        p_csv = Path(tmpdir) / "primary.csv"
+        p_csv.write_text("nome_do_caso,param\ncase_1,val\n", encoding="utf-8")
+        s_csv = Path(tmpdir) / "secondary.csv"
+        s_csv.write_text(
+            "nome_do_caso,tempo,stage,variavel,valor\n"
+            "case_1,1.0,stg1,var,10\n"
+            " case_1 ,2.0,stg2,var,20\n",
+            encoding="utf-8"
+        )
+        loaded = loader.load(p_csv, s_csv)
+        assert len(loaded.cases) == 1
+        case = loaded.cases[0]
+        # Both rows must be merged into case_1 stages, sorted by tempo
+        assert len(case.stages) == 2
+        assert case.stages[0].target_time == 1.0
+        assert case.stages[0].stage_label == "stg1"
+        assert case.stages[1].target_time == 2.0
+        assert case.stages[1].stage_label == "stg2"
+
+
+def test_environment_adapter_resolve_bash_finds_which():
+    adapter = EnvironmentAdapter()
+    bash = adapter.resolve_bash()
+    assert "bash" in bash
+    assert Path(bash).exists() or bash == "bash.exe"
 
 
 def test_audit_row_marked_missing_when_any_case_lacks_variable():

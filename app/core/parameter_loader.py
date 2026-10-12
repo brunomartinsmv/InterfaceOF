@@ -105,8 +105,8 @@ class ParameterLoader:
     def _validate_secondary_values(self, df: pd.DataFrame) -> None:
         if df[['nome_do_caso', 'tempo', 'variavel', 'valor']].isnull().any().any():
             raise ValueError('CSV secundário contém campos vazios.')
-        for case_name, group in df.groupby('nome_do_caso', sort=False):
-            self.sanitize_case_name(case_name)
+        sanitized_col = df['nome_do_caso'].apply(self.sanitize_case_name)
+        for case_name, group in df.groupby(sanitized_col, sort=False):
             try:
                 tempos = [float(t) for t in group['tempo']]
             except (ValueError, TypeError):
@@ -152,16 +152,16 @@ class ParameterLoader:
         if df is None or df.empty:
             return {}
         events_by_case: dict[str, list[StageEvent]] = {}
-        for case_name, group in df.groupby('nome_do_caso', sort=False):
-            case_key = self.sanitize_case_name(case_name)
+        sanitized_col = df['nome_do_caso'].apply(self.sanitize_case_name)
+        for case_key, group in df.groupby(sanitized_col, sort=False):
             tempo_groups: dict[float, dict[str, Any]] = {}
             for _, row in group.iterrows():
                 try:
                     tempo = float(row['tempo'])
                 except (ValueError, TypeError):
-                    raise ValueError(f'Tempo inválido no CSV secundário para o caso {case_name!r}: {row["tempo"]!r}')
+                    raise ValueError(f'Tempo inválido no CSV secundário para o caso {case_key!r}: {row["tempo"]!r}')
                 if not (tempo >= 0.0) or pd.isna(tempo):
-                    raise ValueError(f'Tempo negativo ou inválido no CSV secundário para o caso {case_name!r}: {tempo}')
+                    raise ValueError(f'Tempo negativo ou inválido no CSV secundário para o caso {case_key!r}: {tempo}')
 
                 label = str(row.get('stage', '')).strip()
                 if tempo not in tempo_groups:

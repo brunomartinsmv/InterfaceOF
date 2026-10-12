@@ -52,6 +52,9 @@ class EnvironmentAdapter:
         system = self.host_kind()
         if system == 'windows':
             return 'bash.exe'
+        which_bash = shutil.which('bash')
+        if which_bash:
+            return which_bash
         if system == 'macos':
             for candidate in ('/opt/homebrew/bin/bash', '/usr/local/bin/bash', '/bin/bash'):
                 if Path(candidate).is_file():
@@ -130,15 +133,15 @@ class EnvironmentAdapter:
     def build_environment_prelude(self) -> list[str]:
         if self.host_kind() != 'macos':
             return []
-        return [
-            'for _interfaceof_path in /opt/homebrew/bin /usr/local/bin; do',
-            '    case ":${PATH:-}:" in',
-            '        *":${_interfaceof_path}:"*) ;;',
-            '        *) PATH="${PATH:+${PATH}:}${_interfaceof_path}" ;;',
-            '    esac',
-            'done',
-            'export PATH',
-            'unset _interfaceof_path',
+        return [\
+            'for _interfaceof_path in /opt/homebrew/bin /usr/local/bin; do',\
+            '    case ":${PATH:-}:" in',\
+            '        *":${_interfaceof_path}:"*) ;;',\
+            '        *) PATH="${PATH:+${PATH}:}${_interfaceof_path}" ;;',\
+            '    esac',\
+            'done',\
+            'export PATH',\
+            'unset _interfaceof_path',\
         ]
 
     def build_activation_lines(self, config: ProjectConfig) -> list[str]:
