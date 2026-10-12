@@ -134,19 +134,32 @@ class MainWindow(QMainWindow):
         return [line.strip() for line in text.splitlines() if line.strip()]
 
     def build_config(self) -> ProjectConfig:
+        stage_commands = self._multiline_commands(self.settings_tab.stage_commands.toPlainText()) or ['foamRun']
+        first_cmd_tokens = stage_commands[0].split() if stage_commands else []
+        default_solver = 'foamRun'
+        if first_cmd_tokens:
+            known_solvers = {'foamRun', 'simpleFoam', 'pimpleFoam', 'interFoam', 'icoFoam', 'rhoPimpleFoam', 'buoyantPimpleFoam'}
+            for tok in first_cmd_tokens:
+                if tok in known_solvers:
+                    default_solver = tok
+                    break
+            else:
+                default_solver = first_cmd_tokens[0]
+
         return ProjectConfig(
             base_case_dir=Path(self.project_tab.base_case_edit.text().strip()) if self.project_tab.base_case_edit.text().strip() else None,
             primary_csv=Path(self.project_tab.primary_csv_edit.text().strip()) if self.project_tab.primary_csv_edit.text().strip() else None,
             secondary_csv=Path(self.project_tab.secondary_csv_edit.text().strip()) if self.project_tab.secondary_csv_edit.text().strip() else None,
             output_dir=Path(self.project_tab.output_dir_edit.text().strip()) if self.project_tab.output_dir_edit.text().strip() else None,
             runner_mode=self.settings_tab.runner_mode.currentText().strip() or 'internal',
+            default_solver=default_solver,
             directory_prefix=self.settings_tab.dir_prefix.text().strip() or 'case_',
             log_prefix=self.settings_tab.log_prefix.text().strip() or 'log_',
             activation_enabled=self.settings_tab.activation_enabled.isChecked(),
             activation_mode='source_command' if self.settings_tab.activation_enabled.isChecked() else 'none',
             activation_command=self.settings_tab.activation_command.text().strip(),
             internal_setup_commands=self._multiline_commands(self.settings_tab.setup_commands.toPlainText()),
-            internal_stage_commands=self._multiline_commands(self.settings_tab.stage_commands.toPlainText()) or ['foamRun'],
+            internal_stage_commands=stage_commands,
             internal_post_commands=self._multiline_commands(self.settings_tab.post_commands.toPlainText()),
             plot_time_stride=float(self.settings_tab.plot_time_stride.value()),
             plot_iteration_stride=max(1, int(self.settings_tab.plot_iteration_stride.value())),
@@ -178,10 +191,11 @@ class MainWindow(QMainWindow):
 
     def run_campaign(self) -> None:
         try:
-            config = self.build_config()
             if self.worker_thread is not None:
                 QMessageBox.warning(self, 'Execução', 'Já existe uma campanha em execução.')
                 return
+            self.manager.reset_stop()
+            config = self.build_config()
             self.project_tab.validate_button.setEnabled(False)
             self.execution_tab.clear_console()
             self.execution_tab.reset_statuses()

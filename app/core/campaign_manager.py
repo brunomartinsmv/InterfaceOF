@@ -179,7 +179,6 @@ class CampaignManager:
         if not config.output_dir or not config.base_case_dir:
             raise ValueError('Configuração incompleta para execução.')
 
-        self.reset_stop()
         campaign_paths = build_campaign_paths(config.output_dir)
         ensure_dir(campaign_paths.campaign_dir)
         ensure_dir(campaign_paths.logs_dir)
@@ -210,8 +209,19 @@ class CampaignManager:
             case_status.metrics['activation_enabled'] = config.activation_enabled
             case_status.metrics['activation_mode'] = config.activation_mode
             case_status.metrics['activation_command'] = config.activation_command if config.activation_enabled else ''
-            case_status.metrics['solver'] = case.config_parameters.get('cfg__solver', config.internal_stage_commands or 'foamRun')
-            case_status.metrics['n_processors'] = case.config_parameters.get('cfg__n_processors', '1')
+
+            solver_override = case.config_parameters.get('cfg__solver')
+            if solver_override:
+                resolved_solver = str(solver_override).strip()
+            elif config.default_solver:
+                resolved_solver = str(config.default_solver).strip()
+            elif config.internal_stage_commands:
+                resolved_solver = config.internal_stage_commands[0].split()[0]
+            else:
+                resolved_solver = 'foamRun'
+
+            case_status.metrics['solver'] = resolved_solver
+            case_status.metrics['n_processors'] = str(case.config_parameters.get('cfg__n_processors', config.n_processors))
             case_status.metrics['runner_mode'] = runner_mode
             case_status.metrics['n_stages'] = len(case.stages)
 
@@ -441,7 +451,13 @@ class CampaignManager:
             if idx + 1 < len(stages):
                 next_target = stages[idx + 1].target_time
             else:
-                next_target = final_target if (final_target is not None and final_target > stage.target_time) else None
+                target_cand = final_target
+                if 'end_time' in current_parameters:
+                    try:
+                        target_cand = float(current_parameters['end_time'])
+                    except (ValueError, TypeError):
+                        pass
+                next_target = target_cand if (target_cand is not None and target_cand > stage.target_time) else None
 
             if next_target is not None and next_target > stage.target_time:
                 if not update_controldict_for_stage(case_dir, target_time=next_target, start_from_latest=True):

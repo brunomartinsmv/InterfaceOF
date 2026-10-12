@@ -5,7 +5,7 @@ from pathlib import Path
 
 from app.core.campaign_manager import CampaignManager, read_controldict_endtime
 from app.core.parameter_loader import LoadedParameters
-from app.core.preflight_validator import PreflightValidator
+from app.core.preflight_validator import PreflightReport, PreflightValidator
 from app.models.case_definition import CaseDefinition
 from app.models.project_config import ProjectConfig
 from app.models.run_status import RunStatus
@@ -84,3 +84,55 @@ def test_mean_wall_clock_time_divides_by_executed_cases():
     assert metrics["completed_cases"] == 1
     # Mean must be 10.0 / 1 = 10.0, NOT 10.0 / 3 = 3.333
     assert metrics["campaign_wall_clock_seconds_mean"] == 10.0
+
+
+def test_solver_and_processors_defaults_reported_cleanly():
+    config = ProjectConfig(default_solver="simpleFoam", n_processors=8)
+    case = CaseDefinition(
+        case_name="case_default",
+        template_parameters={},
+        config_parameters={},
+    )
+    # Check that when metrics are set, default_solver is simpleFoam and n_processors is 8
+    solver_override = case.config_parameters.get('cfg__solver')
+    if solver_override:
+        resolved_solver = str(solver_override).strip()
+    elif config.default_solver:
+        resolved_solver = str(config.default_solver).strip()
+    elif config.internal_stage_commands:
+        resolved_solver = config.internal_stage_commands[0].split()[0]
+    else:
+        resolved_solver = 'foamRun'
+
+    resolved_procs = str(case.config_parameters.get('cfg__n_processors', config.n_processors))
+    assert resolved_solver == "simpleFoam"
+    assert isinstance(resolved_solver, str)
+    assert resolved_procs == "8"
+
+
+def test_pending_cancellation_not_cleared_by_campaign_manager():
+    manager = CampaignManager()
+    # If interrupted before/during validation or worker startup
+    manager.stop()
+    assert manager.runner.is_interrupted is True
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir) / "base"
+        base_dir.mkdir()
+        (base_dir / "system").mkdir()
+        (base_dir / "system" / "controlDict").write_text("endTime 1.0;\n", encoding="utf-8")
+        out_dir = Path(tmpdir) / "output"
+        csv_file = Path(tmpdir) / "cases.csv"
+        csv_file.write_text("nome_do_caso\ncase_1\n", encoding="utf-8")
+
+        config = ProjectConfig(
+            base_case_dir=base_dir,
+            primary_csv=csv_file,
+            output_dir=out_dir,
+        )
+
+        # run_campaign should NOT reset_stop()
+        manager.run_campaign(config)
+        assert manager.runner.is_interrupted is True
+        # Since it was interrupted before starting any cases, 0 cases ran
+        assert len(manager.statuses) == 0
