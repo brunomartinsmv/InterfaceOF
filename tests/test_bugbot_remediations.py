@@ -83,6 +83,11 @@ def test_solver_override_preserves_wrappers():
     cmds3 = manager._stage_commands(case, config3)
     assert cmds3 == ["mpirun -np 4 --bind-to core -x OMP_NUM_THREADS=1 interFoam -parallel"]
 
+    # Test flag arguments or paths ending in Foam are not replaced
+    config4 = ProjectConfig(internal_stage_commands=["mpirun -np 4 -wdir /cases/bubbleFoam mySolver -parallel"])
+    cmds4 = manager._stage_commands(case, config4)
+    assert cmds4 == ["mpirun -np 4 -wdir /cases/bubbleFoam interFoam -parallel"]
+
 
 def test_secondary_events_merged_across_whitespace_case_names():
     loader = ParameterLoader()

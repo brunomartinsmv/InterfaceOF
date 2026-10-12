@@ -133,18 +133,7 @@ def _replace_solver_in_command(cmd: str, solver_override: str) -> str:
     if not tokens:
         return solver_override
 
-    known_solvers = {'foamRun', 'simpleFoam', 'pimpleFoam', 'interFoam', 'icoFoam', 'rhoPimpleFoam', 'buoyantPimpleFoam'}
-    for i, tok in enumerate(tokens):
-        if tok in known_solvers:
-            tokens[i] = solver_override
-            return ' '.join(tokens)
-
-    for i, tok in enumerate(tokens):
-        if tok.endswith('Foam') and not tok.startswith('-'):
-            tokens[i] = solver_override
-            return ' '.join(tokens)
-
-    wrappers = {'mpirun', 'mpiexec', 'srun', 'runApplication', 'runParallel'}
+    wrappers = {'mpirun', 'mpiexec', 'srun', 'runApplication', 'runParallel', 'time', 'env'}
     wrapper_flags_with_val = {
         '-np', '-n', '-N', '-c', '--nprocs', '-nprocs',
         '-x', '-env', '--env',
@@ -154,25 +143,26 @@ def _replace_solver_in_command(cmd: str, solver_override: str) -> str:
         '-wd', '-wdir', '-path',
     }
 
-    if tokens[0] in wrappers:
-        idx = 1
-        while idx < len(tokens):
-            tok = tokens[idx]
-            if '=' in tok and tok.startswith('-'):
-                idx += 1
-            elif tok in {'--mca', '-mca'}:
-                idx += 3
-            elif tok in wrapper_flags_with_val:
-                idx += 2
-            elif tok.startswith('-'):
-                idx += 1
-            else:
-                tokens[idx] = solver_override
-                return ' '.join(tokens)
-        tokens.append(solver_override)
-        return ' '.join(tokens)
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if '=' in tok and not tok.startswith('-'):
+            idx += 1
+        elif Path(tok).name in wrappers or tok in wrappers:
+            idx += 1
+        elif '=' in tok and tok.startswith('-'):
+            idx += 1
+        elif tok in {'--mca', '-mca'}:
+            idx += 3
+        elif tok in wrapper_flags_with_val:
+            idx += 2
+        elif tok.startswith('-'):
+            idx += 1
+        else:
+            tokens[idx] = solver_override
+            return ' '.join(tokens)
 
-    tokens[0] = solver_override
+    tokens.append(solver_override)
     return ' '.join(tokens)
 
 
