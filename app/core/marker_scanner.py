@@ -11,6 +11,16 @@ BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", flags=re.DOTALL)
 LINE_COMMENT_RE = re.compile(r"//.*$")
 
 
+def strip_comments(text: str) -> str:
+    """Remove comentários C/C++ (// e /* */) preservando as quebras de linha para manter a numeração."""
+    def _preserve_newlines(match: re.Match[str]) -> str:
+        return re.sub(r'[^\n]', ' ', match.group(0))
+
+    text = BLOCK_COMMENT_RE.sub(_preserve_newlines, text)
+    cleaned_lines = [LINE_COMMENT_RE.sub('', line) for line in text.splitlines()]
+    return '\n'.join(cleaned_lines)
+
+
 @dataclass(slots=True)
 class MarkerOccurrence:
     variable: str
@@ -37,6 +47,4 @@ class MarkerScanner:
         return occurrences
 
     def _remove_comments(self, text: str) -> str:
-        text = BLOCK_COMMENT_RE.sub('', text)
-        cleaned_lines = [LINE_COMMENT_RE.sub('', line) for line in text.splitlines()]
-        return '\n'.join(cleaned_lines)
+        return strip_comments(text)

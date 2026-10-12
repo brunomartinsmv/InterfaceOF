@@ -35,9 +35,6 @@ class ProjectConfig:
             if isinstance(value, Path):
                 payload[key] = str(value)
         hidden_keys = {
-            'runner_mode',
-            'default_solver',
-            'n_processors',
             'shell_executable',
         }
         for key in hidden_keys:

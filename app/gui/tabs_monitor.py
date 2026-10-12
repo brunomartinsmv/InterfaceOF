@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -14,9 +16,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 
 
 class MonitorTab(QWidget):
@@ -40,6 +39,7 @@ class MonitorTab(QWidget):
         self._last_flushed_time_by_eq: dict[str, float] = {}
         self._plotted_count_by_eq: dict[str, int] = defaultdict(int)
         self._last_plotted_time_by_eq: dict[str, float] = {}
+        self._pending_preview_point: dict[str, tuple[float, float] | None] = {}
         self._active_log_path = ''
         self._active_log_name = ''
         self._dirty_table = False
@@ -112,6 +112,7 @@ class MonitorTab(QWidget):
             self._refresh_timer.stop()
 
     def reset(self) -> None:
+        self.flush_cached_residuals()
         self.set_time(None)
         self.set_status('idle')
         self.set_active_command('-', '-')
@@ -124,6 +125,7 @@ class MonitorTab(QWidget):
         self.time_label.setText(f'Tempo atual: {text}')
 
     def set_active_command(self, command_label: str, log_path: str) -> None:
+        self.flush_cached_residuals()
         self.command_label.setText(f'Comando atual: {command_label}')
         self.log_label.setText(f'Log atual: {Path(log_path).name if log_path not in {"-", ""} else log_path}')
         self._active_log_path = log_path
@@ -134,6 +136,7 @@ class MonitorTab(QWidget):
         self._last_flushed_time_by_eq.clear()
         self._plotted_count_by_eq.clear()
         self._last_plotted_time_by_eq.clear()
+        self._pending_preview_point.clear()
         self._plot_enabled.clear()
         self._clear_plot_checkboxes()
         self._dirty_selector = True
@@ -176,12 +179,18 @@ class MonitorTab(QWidget):
             if last_time is None or (time_value - last_time) >= self._plot_time_stride:
                 self._residual_history[equation].append((time_value, value))
                 self._last_plotted_time_by_eq[equation] = time_value
+                self._pending_preview_point[equation] = None
                 self._dirty_plot = True
+            else:
+                self._pending_preview_point[equation] = (time_value, value)
             return
 
         if point_index == 1 or ((point_index - 1) % self._plot_iteration_stride == 0):
             self._residual_history[equation].append((float(point_index), value))
+            self._pending_preview_point[equation] = None
             self._dirty_plot = True
+        else:
+            self._pending_preview_point[equation] = (float(point_index), value)
 
     def ingest_residual_batch(self, batch: object) -> None:
         if not isinstance(batch, list):
@@ -221,6 +230,20 @@ class MonitorTab(QWidget):
         if self._active:
             self._refresh_ui(force=False)
 
+    def flush_cached_residuals(self) -> None:
+        """Transfere os resíduos retidos no cache do último timestep para o histórico plotado."""
+        for equation, cache in list(self._residual_timestep_cache.items()):
+            for time_str, value in list(cache.items()):
+                try:
+                    time_val = float(time_str)
+                    self._accept_point(equation, time_val, value)
+                except ValueError:
+                    self._accept_point(equation, None, value)
+            cache.clear()
+        self._pending_preview_point.clear()
+        if self._active:
+            self._refresh_ui(force=True)
+
     def _refresh_ui(self, force: bool = False) -> None:
         if not self._active and not force:
             return
@@ -241,14 +264,7 @@ class MonitorTab(QWidget):
         self._dirty_table = False
 
     def _preview_point(self, equation: str) -> tuple[float, float] | None:
-        latest = self._latest_residuals.get(equation)
-        if not latest:
-            return None
-        value = float(latest['value'])
-        time_value = latest.get('time')
-        if self._using_time_axis() and time_value is not None:
-            return float(time_value), value
-        return float(self._plotted_count_by_eq.get(equation, 0) + 1), value
+        return self._pending_preview_point.get(equation)
 
     def _refresh_plot(self) -> None:
         self.ax.clear()
@@ -273,9 +289,8 @@ class MonitorTab(QWidget):
             ys = [y for _, y in filtered]
             self.ax.plot(xs, ys, label=equation, linewidth=1.0)
             plotted = True
+
         if plotted:
-            self.ax.legend(loc='best')
-        else:
-            self.ax.text(0.5, 0.5, 'Selecione resíduos para plotar', ha='center', va='center', transform=self.ax.transAxes)
+            self.ax.legend(loc='upper right', fontsize='small')
         self.canvas.draw_idle()
         self._dirty_plot = False

@@ -19,8 +19,15 @@ class CaseBuilder:
         self.template_engine = template_engine or TemplateEngine()
 
     def build(self, base_case_dir: Path, output_campaign_dir: Path, case: CaseDefinition) -> BuiltCase:
-        case_dir = output_campaign_dir / case.case_name
         ensure_dir(output_campaign_dir)
+        campaign_resolved = output_campaign_dir.resolve()
+        case_dir = (output_campaign_dir / case.case_name).resolve()
+
+        if not case_dir.is_relative_to(campaign_resolved) or case_dir == campaign_resolved:
+            raise ValueError(
+                f'Nome do caso inseguro ou fora da campanha de destino: {case.case_name!r}'
+            )
+
         copy_case_directory(base_case_dir, case_dir)
         self.template_engine.prepare_case_templates(case_dir)
         replacement_summary = self.template_engine.apply_parameters(case_dir, case.template_parameters)

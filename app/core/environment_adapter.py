@@ -49,33 +49,33 @@ class EnvironmentAdapter:
         return self.host_kind() in {'macos', 'linux'}
 
     def resolve_bash(self) -> str:
-        if self.host_kind() == 'macos':
-            for candidate in ('/opt/homebrew/bin/bash', '/usr/local/bin/bash'):
+        system = self.host_kind()
+        if system == 'windows':
+            return 'bash.exe'
+        if system == 'macos':
+            for candidate in ('/opt/homebrew/bin/bash', '/usr/local/bin/bash', '/bin/bash'):
                 if Path(candidate).is_file():
                     return candidate
-        found = shutil.which('bash')
-        if found:
-            return found
-        return '/bin/bash'
+            return '/bin/bash'
+        return '/usr/bin/bash' if Path('/usr/bin/bash').is_file() else '/bin/bash'
+
+    def sanitize_label(self, label: str) -> str:
+        safe = ''.join(c if (c.isalnum() or c in '._-') else '_' for c in label)
+        return safe.strip('._') or 'command'
 
     def shell_prefix(self, config: ProjectConfig, *, interactive: bool = False) -> list[str]:
-        shell = config.shell_executable.strip()
-        login = self._uses_login_shell()
-        if interactive:
-            shell_flag = '-ic'
-        elif login:
-            shell_flag = '-lc'
-        else:
-            shell_flag = '-c'
+        system = self.host_kind()
+        shell_flag = '-ic' if interactive else '-c'
 
-        if self.running_inside_wsl():
-            if not shell or shell.lower() == 'wsl':
-                return [self.resolve_bash(), shell_flag]
-            tokens = shlex.split(shell)
-            return tokens + [shell_flag]
+        if system == 'macos':
+            return [self.resolve_bash(), shell_flag]
 
-        if self.is_native_unix():
-            if not shell or shell.lower() == 'wsl':
+        if system == 'linux':
+            return [self.resolve_bash(), shell_flag]
+
+        shell = (config.custom_shell or '').strip()
+        if system == 'wsl':
+            if not shell:
                 return [self.resolve_bash(), shell_flag]
             tokens = shlex.split(shell)
             if len(tokens) == 1 and tokens[0].lower() == 'wsl':
@@ -89,7 +89,37 @@ class EnvironmentAdapter:
             return ['wsl', 'bash', shell_flag]
         return tokens + [shell_flag]
 
+    def to_wsl_path(self, path: Path | str) -> str:
+        raw_text = str(path)
+        normalized_raw = raw_text.replace('\\', '/')
+        if len(normalized_raw) >= 2 and normalized_raw[1] == ':' and normalized_raw[0].isalpha():
+            drive = normalized_raw[0].lower()
+            rest = normalized_raw[2:]
+            return f'/mnt/{drive}{rest}'
+
+        p = Path(path) if isinstance(path, str) else path
+        try:
+            p = p.resolve()
+        except OSError:
+            pass
+        text = str(p)
+        try:
+            res = subprocess.run(['wsl', 'wslpath', '-u', text], capture_output=True, text=True, timeout=5, check=True)
+            wsl_p = res.stdout.strip()
+            if wsl_p:
+                return wsl_p
+        except Exception:
+            pass
+        normalized = text.replace('\\', '/')
+        if len(normalized) >= 2 and normalized[1] == ':' and normalized[0].isalpha():
+            drive = normalized[0].lower()
+            rest = normalized[2:]
+            return f'/mnt/{drive}{rest}'
+        return normalized
+
     def quote_path(self, path: Path) -> str:
+        if self.host_kind() == 'windows':
+            return shlex.quote(self.to_wsl_path(path))
         target = path.resolve() if self.is_native_unix() else path
         posix = str(target).replace('\\', '/')
         return shlex.quote(posix)
@@ -267,11 +297,3 @@ class EnvironmentAdapter:
             if tokens and tokens[0] not in commands:
                 commands.append(tokens[0])
         return commands or ['foamRun']
-
-    def sanitize_label(self, text: str) -> str:
-        cleaned = ''.join(ch if ch.isalnum() or ch in {'_', '-'} else '_' for ch in text.strip())
-        cleaned = cleaned.strip('_')
-        return cleaned or 'command'
-
-    def _uses_login_shell(self) -> bool:
-        return self.host_kind() in {'wsl', 'windows'}

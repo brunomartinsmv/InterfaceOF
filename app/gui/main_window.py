@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox, QTabWidget, QVBoxLayout, QWidget
 
 from app.core.campaign_manager import CampaignManager
@@ -53,7 +54,6 @@ class CampaignWorker(QObject):
         self._last_residual_emit = time.monotonic()
         self.residual_batch.emit(payload)
 
-
     def _handle_command_started(self, label: str, log_path: str) -> None:
         self._flush_residuals()
         self.command_started.emit(label, log_path)
@@ -71,6 +71,7 @@ class CampaignWorker(QObject):
             self._flush_residuals()
             self.finished.emit(str(campaign_dir))
         except Exception as exc:  # noqa: BLE001
+            self.manager.stop()
             self._flush_residuals()
             self.failed.emit(str(exc))
 
@@ -106,38 +107,45 @@ class MainWindow(QMainWindow):
         self.project_tab.validate_button.clicked.connect(self.validate_project)
         self.execution_tab.run_button.clicked.connect(self.run_campaign)
         self.execution_tab.stop_button.clicked.connect(self.stop_case)
-        self.execution_tab.open_case_requested.connect(self.open_case_in_paraview)
-        self.execution_tab.open_all_requested.connect(self.open_all_cases_in_paraview)
+        self.execution_tab.open_paraview_requested.connect(self.open_case_in_paraview)
+        self.execution_tab.open_all_paraview_requested.connect(self.open_all_cases_in_paraview)
         self.settings_tab.probe_button.clicked.connect(self.probe_openfoam_environment)
-        self._on_tab_changed(self.tabs.currentIndex())
 
-    def _activation_from_settings(self) -> dict[str, str | bool]:
-        command = self.settings_tab.activation_command.text().strip()
-        enabled = self.settings_tab.activation_enabled.isChecked() and bool(command)
-        return {
-            'activation_enabled': enabled,
-            'activation_mode': 'source_command' if enabled else 'none',
-            'activation_command': command,
-            'bashrc_path': '~/.bashrc',
-        }
+        self._apply_suggested_activation_if_empty()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self.worker_thread is not None and self.worker_thread.isRunning():
+            self.manager.stop()
+            self.worker_thread.quit()
+            if not self.worker_thread.wait(3000):
+                self.worker_thread.terminate()
+                self.worker_thread.wait(1000)
+        event.accept()
+
+    def _apply_suggested_activation_if_empty(self) -> None:
+        current = self.settings_tab.activation_command.text().strip()
+        if not current:
+            suggested = self.manager.runner.environment.suggested_activation_command()
+            if suggested:
+                self.settings_tab.activation_command.setText(suggested)
+                self.settings_tab.activation_enabled.setChecked(True)
+                self.settings_tab.activation_mode.setCurrentText('source_command')
 
     def _multiline_commands(self, text: str) -> list[str]:
         return [line.strip() for line in text.splitlines() if line.strip()]
 
     def build_config(self) -> ProjectConfig:
-        secondary = self.project_tab.secondary_csv_edit.text().strip()
         return ProjectConfig(
             base_case_dir=Path(self.project_tab.base_case_edit.text().strip()) if self.project_tab.base_case_edit.text().strip() else None,
             primary_csv=Path(self.project_tab.primary_csv_edit.text().strip()) if self.project_tab.primary_csv_edit.text().strip() else None,
-            secondary_csv=Path(secondary) if secondary else None,
+            secondary_csv=Path(self.project_tab.secondary_csv_edit.text().strip()) if self.project_tab.secondary_csv_edit.text().strip() else None,
             output_dir=Path(self.project_tab.output_dir_edit.text().strip()) if self.project_tab.output_dir_edit.text().strip() else None,
-            runner_mode='internal',
-            default_solver='foamRun',
-            n_processors=1,
-            directory_prefix=self.settings_tab.dir_prefix.text().strip() or 'case_',
-            log_prefix=self.settings_tab.log_prefix.text().strip() or 'log_',
-            shell_executable='',
-            **self._activation_from_settings(),
+            runner_mode=self.settings_tab.runner_mode.currentText().strip() or 'internal',
+            custom_shell=self.settings_tab.custom_shell.text().strip(),
+            activation_enabled=self.settings_tab.activation_enabled.isChecked(),
+            activation_mode=self.settings_tab.activation_mode.currentText().strip(),
+            activation_command=self.settings_tab.activation_command.text().strip(),
+            bashrc_path=self.settings_tab.bashrc_path.text().strip(),
             internal_setup_commands=self._multiline_commands(self.settings_tab.setup_commands.toPlainText()),
             internal_stage_commands=self._multiline_commands(self.settings_tab.stage_commands.toPlainText()) or ['foamRun'],
             internal_post_commands=self._multiline_commands(self.settings_tab.post_commands.toPlainText()),
@@ -153,6 +161,9 @@ class MainWindow(QMainWindow):
         self.monitor_tab.set_active(current is self.monitor_tab)
 
     def validate_project(self) -> None:
+        if self.worker_thread is not None and self.worker_thread.isRunning():
+            QMessageBox.warning(self, 'Validação', 'Não é possível revalidar durante a execução de uma campanha.')
+            return
         try:
             config = self.build_config()
             report = self.manager.validate_project(config)
@@ -172,6 +183,7 @@ class MainWindow(QMainWindow):
             if self.worker_thread is not None:
                 QMessageBox.warning(self, 'Execução', 'Já existe uma campanha em execução.')
                 return
+            self.project_tab.validate_button.setEnabled(False)
             self.execution_tab.clear_console()
             self.execution_tab.reset_statuses()
             self.monitor_tab.set_plot_config(
@@ -198,11 +210,12 @@ class MainWindow(QMainWindow):
             self.worker_thread.start()
             self.footer_label.setText('Campanha em execução...')
         except Exception as exc:  # noqa: BLE001
+            self.project_tab.validate_button.setEnabled(True)
             QMessageBox.critical(self, 'Erro ao iniciar campanha', str(exc))
 
     def stop_case(self) -> None:
-        self.manager.runner.stop_case()
-        self.footer_label.setText('Solicitado encerramento do caso atual.')
+        self.manager.stop()
+        self.footer_label.setText('Solicitado encerramento da campanha.')
 
     def open_case_in_paraview(self, case_name: str) -> None:
         payload = self.execution_tab.case_outputs.get(case_name)
@@ -229,9 +242,10 @@ class MainWindow(QMainWindow):
             self.footer_label.setText(f'Abrindo ParaView com {len(foam_files)} case(s)... Script: {script_path.name}')
         except FileNotFoundError:
             self.footer_label.setText('ParaView não encontrado no PATH nem em /Applications.')
+            QMessageBox.critical(self, 'ParaView', 'ParaView não encontrado no PATH nem em /Applications.')
         except Exception as exc:  # noqa: BLE001
             self.footer_label.setText(f'Falha ao abrir cases em conjunto: {exc}')
-            print(f'Falha ao abrir cases em conjunto: {exc}')
+            QMessageBox.critical(self, 'ParaView', f'Falha ao abrir cases em conjunto:\n{exc}')
 
     def probe_openfoam_environment(self) -> None:
         try:
@@ -249,14 +263,19 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, 'Ambiente OpenFOAM', str(exc))
 
     def _on_run_finished(self, campaign_dir: str) -> None:
+        self.project_tab.validate_button.setEnabled(True)
+        self.monitor_tab.flush_cached_residuals()
         self.execution_tab.apply_case_outputs_from_statuses(self.manager.statuses)
         self.footer_label.setText(f'Campanha finalizada: {campaign_dir}')
 
     def _on_run_failed(self, message: str) -> None:
+        self.project_tab.validate_button.setEnabled(True)
+        self.monitor_tab.flush_cached_residuals()
         self.footer_label.setText('Campanha falhou.')
         QMessageBox.critical(self, 'Falha na campanha', message)
 
     def _cleanup_worker(self) -> None:
+        self.project_tab.validate_button.setEnabled(True)
         if self.worker is not None:
             self.worker.deleteLater()
         if self.worker_thread is not None:

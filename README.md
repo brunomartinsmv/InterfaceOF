@@ -58,4 +58,8 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
+## Execução de Testes Automatizados
 
+```bash
+pytest
+```

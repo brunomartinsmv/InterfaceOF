@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
@@ -22,6 +23,9 @@ class SettingsTab(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._environment = EnvironmentAdapter()
+
+        self.runner_mode = QComboBox()
+        self.runner_mode.addItems(['internal', 'allrun'])
 
         self.dir_prefix = QLineEdit('case_')
         self.log_prefix = QLineEdit('log_')
@@ -63,6 +67,7 @@ class SettingsTab(QWidget):
         self.probe_label.setWordWrap(True)
 
         form = QFormLayout()
+        form.addRow('Modo de execução', self.runner_mode)
         form.addRow('Prefixo diretório', self.dir_prefix)
         form.addRow('Prefixo log', self.log_prefix)
         form.addRow('Δtempo mínimo entre pontos (s)', self.plot_time_stride)
