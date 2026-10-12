@@ -7,9 +7,22 @@ from pathlib import Path
 from app.utils.normalizer import ensure_valid_token
 
 MARKER_RE = re.compile(r"\{\[of_var:([a-z0-9_]+)\]\}")
-BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", flags=re.DOTALL)
-LINE_COMMENT_RE = re.compile(r"//.*$")
+C_TOKEN_RE = re.compile(r"(\"(?:\\.|[^\"\\\\])*\")|(/\*.*?\*/)|(//[^\n]*)", flags=re.DOTALL)
 
+
+def strip_comments(text: str) -> str:
+    """Remove comentarios C/C++ (// e /* */) preservando quebras de linha e strings entre aspas."""
+    def _rep(match: re.Match[str]) -> str:
+        string_literal = match.group(1)
+        if string_literal is not None:
+            return string_literal
+        block_comment = match.group(2)
+        if block_comment is not None:
+            return re.sub(r"[^\n]", " ", block_comment)
+        line_comment = match.group(3)
+        return " " * len(line_comment)
+
+    return C_TOKEN_RE.sub(_rep, text)
 
 @dataclass(slots=True)
 class MarkerOccurrence:
@@ -37,6 +50,4 @@ class MarkerScanner:
         return occurrences
 
     def _remove_comments(self, text: str) -> str:
-        text = BLOCK_COMMENT_RE.sub('', text)
-        cleaned_lines = [LINE_COMMENT_RE.sub('', line) for line in text.splitlines()]
-        return '\n'.join(cleaned_lines)
+        return strip_comments(text)

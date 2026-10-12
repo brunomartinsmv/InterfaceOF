@@ -43,9 +43,18 @@ class PreflightValidator:
         report = PreflightReport(markers=markers)
 
         marker_names = {m.variable for m in markers}
-        all_primary = set().union(*(case.template_parameters.keys() for case in loaded.cases)) if loaded.cases else set()
+        all_cases = loaded.cases
+
+        missing_by_case: dict[str, set[str]] = {}
+        for case in all_cases:
+            case_vars = set(case.template_parameters.keys())
+            missing_for_this_case = marker_names - case_vars
+            if missing_for_this_case:
+                missing_by_case[case.case_name] = missing_for_this_case
+
+        all_primary = set().union(*(case.template_parameters.keys() for case in all_cases)) if all_cases else set()
         all_secondary = set()
-        for case in loaded.cases:
+        for case in all_cases:
             for stage in case.stages:
                 for change in stage.changes:
                     all_secondary.add(change.parameter)
@@ -53,21 +62,30 @@ class PreflightValidator:
         all_supplied = all_primary | all_secondary
 
         for marker in markers:
-            status = 'ok' if marker.variable in all_supplied else 'faltando_no_csv'
+            is_missing_in_any_case = not all_cases or any(
+                marker.variable not in case.template_parameters for case in all_cases
+            )
+            status = 'faltando_no_csv' if is_missing_in_any_case else 'ok'
             report.audit_rows.append(VariableAuditRow(marker.variable, str(marker.file_path), marker.line_number,
                                                       status, 'marcador_no_caso'))
 
-        missing = sorted(marker_names - all_supplied)
+        if not all_cases:
+            report.issues.append(ValidationIssue('error', 'Nenhum caso definido no arquivo CSV primário.'))
+            for var in sorted(marker_names):
+                report.issues.append(ValidationIssue('error', f'Marcador sem valor correspondente nos CSVs: {var}'))
+        else:
+            for case_name, missing_vars in sorted(missing_by_case.items()):
+                for var in sorted(missing_vars):
+                    report.issues.append(
+                        ValidationIssue('error', f'Marcador sem valor inicial no caso {case_name!r}: {var}')
+                    )
+
         extras = sorted(all_supplied - marker_names)
-
-        for name in missing:
-            report.issues.append(ValidationIssue('error', f'Marcador sem valor correspondente nos CSVs: {name}'))
-
         for name in extras:
             report.issues.append(ValidationIssue('warning', f'Variável presente nos CSVs sem marcador correspondente: {name}'))
             report.audit_rows.append(VariableAuditRow(name, '', 0, 'sobrando_no_csv', 'csv'))
 
-        self._validate_cases(loaded.cases, report)
+        self._validate_cases(all_cases, report)
         return report
 
     def _validate_cases(self, cases: list[CaseDefinition], report: PreflightReport) -> None:

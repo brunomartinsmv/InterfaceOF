@@ -5,13 +5,18 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.core.marker_scanner import strip_comments
 from app.utils.file_ops import ensure_dir, write_json
 from app.utils.normalizer import ensure_valid_token
 
-MARKER_TEMPLATE = r"\{\[of_var:%s\]\}"
 ANY_MARKER_RE = re.compile(r"\{\[of_var:([a-z0-9_]+)\]\}")
 CACHE_DIRNAME = '.of_campaign_templates'
 MANIFEST_NAME = 'manifest.json'
+
+COMMENT_OR_MARKER_RE = re.compile(
+    r'("(?:\\.|[^"\\])*")|(/\*.*?\*/)|(//[^\n]*)|(\{\[of_var:([a-z0-9_]+)\]\})',
+    flags=re.DOTALL
+)
 
 
 @dataclass(slots=True)
@@ -36,7 +41,8 @@ class TemplateEngine:
                 text = path.read_text(encoding='utf-8', errors='ignore')
             except OSError:
                 continue
-            if not ANY_MARKER_RE.search(text):
+            clean = strip_comments(text)
+            if not ANY_MARKER_RE.search(clean):
                 continue
             rel = path.relative_to(case_dir)
             cached = cache_dir / rel
@@ -52,12 +58,35 @@ class TemplateEngine:
 
         targets = self._target_files(case_dir)
         for path, template_text in targets:
-            new_text = template_text
             local_changes = 0
-            for key, value in normalized.items():
-                pattern = re.compile(MARKER_TEMPLATE % re.escape(key))
-                new_text, count = pattern.subn(value, new_text)
-                local_changes += count
+
+            def _replace_match(match: re.Match[str]) -> str:
+                nonlocal local_changes
+                quoted_str = match.group(1)
+                block_comment = match.group(2)
+                line_comment = match.group(3)
+                if quoted_str is not None:
+                    def _rep_quoted(m: re.Match[str]) -> str:
+                        nonlocal local_changes
+                        var = m.group(1)
+                        if var in normalized:
+                            local_changes += 1
+                            return normalized[var]
+                        return m.group(0)
+                    return ANY_MARKER_RE.sub(_rep_quoted, quoted_str)
+
+                if block_comment is not None:
+                    return block_comment
+                if line_comment is not None:
+                    return line_comment
+
+                var_name = match.group(5)
+                if var_name in normalized:
+                    local_changes += 1
+                    return normalized[var_name]
+                return match.group(0)
+
+            new_text = COMMENT_OR_MARKER_RE.sub(_replace_match, template_text)
             if local_changes:
                 path.write_text(new_text, encoding='utf-8')
                 replaced_count += local_changes
@@ -75,7 +104,8 @@ class TemplateEngine:
                 text = path.read_text(encoding='utf-8', errors='ignore')
             except OSError:
                 continue
-            remaining.update(match.group(1) for match in ANY_MARKER_RE.finditer(text))
+            clean = strip_comments(text)
+            remaining.update(match.group(1) for match in ANY_MARKER_RE.finditer(clean))
         return sorted(remaining)
 
     def _target_files(self, case_dir: Path) -> list[tuple[Path, str]]:
@@ -108,7 +138,8 @@ class TemplateEngine:
                 text = path.read_text(encoding='utf-8', errors='ignore')
             except OSError:
                 continue
-            if ANY_MARKER_RE.search(text):
+            clean = strip_comments(text)
+            if ANY_MARKER_RE.search(clean):
                 targets.append((path, text))
         return targets
 

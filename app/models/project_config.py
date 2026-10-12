@@ -29,15 +29,16 @@ class ProjectConfig:
     plot_time_stride: float = 0.0
     plot_iteration_stride: int = 1
 
+    @property
+    def custom_shell(self) -> str:
+        return self.shell_executable
+
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         for key, value in list(payload.items()):
             if isinstance(value, Path):
                 payload[key] = str(value)
         hidden_keys = {
-            'runner_mode',
-            'default_solver',
-            'n_processors',
             'shell_executable',
         }
         for key in hidden_keys:
