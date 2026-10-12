@@ -243,7 +243,7 @@ class Runner:
             status.status = 'interrupted'
             status.error_type = 'interrupted'
             status.error_message = 'Execução cancelada pelo usuário.'
-        elif overall_return != 0:
+        elif overall_return != 0 or status.error_type is not None:
             if not status.error_type:
                 status.error_type = 'command_failed'
                 status.error_message = status.error_message or 'Um ou mais comandos retornaram código diferente de zero.'

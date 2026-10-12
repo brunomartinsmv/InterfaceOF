@@ -139,14 +139,30 @@ def _replace_solver_in_command(cmd: str, solver_override: str) -> str:
             tokens[i] = solver_override
             return ' '.join(tokens)
 
+    for i, tok in enumerate(tokens):
+        if tok.endswith('Foam') and not tok.startswith('-'):
+            tokens[i] = solver_override
+            return ' '.join(tokens)
+
     wrappers = {'mpirun', 'mpiexec', 'srun', 'runApplication', 'runParallel'}
-    wrapper_flags_with_val = {'-np', '-n', '-N', '--hostfile', '-machinefile'}
+    wrapper_flags_with_val = {
+        '-np', '-n', '-N', '-c', '--nprocs', '-nprocs',
+        '-x', '-env', '--env',
+        '--bind-to', '--map-by', '--rank-by',
+        '-hostfile', '--hostfile', '-machinefile', '--machinefile',
+        '-H', '-host', '--host',
+        '-wd', '-wdir', '-path',
+    }
 
     if tokens[0] in wrappers:
         idx = 1
         while idx < len(tokens):
             tok = tokens[idx]
-            if tok in wrapper_flags_with_val:
+            if '=' in tok and tok.startswith('-'):
+                idx += 1
+            elif tok in {'--mca', '-mca'}:
+                idx += 3
+            elif tok in wrapper_flags_with_val:
                 idx += 2
             elif tok.startswith('-'):
                 idx += 1

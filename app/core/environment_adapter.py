@@ -52,14 +52,18 @@ class EnvironmentAdapter:
         system = self.host_kind()
         if system == 'windows':
             return 'bash.exe'
+        if system == 'macos':
+            for candidate in ('/opt/homebrew/bin/bash', '/usr/local/bin/bash'):
+                if Path(candidate).is_file():
+                    return candidate
+            which_bash = shutil.which('bash')
+            if which_bash and which_bash not in {'/bin/bash', '/usr/bin/bash'}:
+                return which_bash
+            return '/bin/bash'
+        # Linux / WSL / other Unix
         which_bash = shutil.which('bash')
         if which_bash:
             return which_bash
-        if system == 'macos':
-            for candidate in ('/opt/homebrew/bin/bash', '/usr/local/bin/bash', '/bin/bash'):
-                if Path(candidate).is_file():
-                    return candidate
-            return '/bin/bash'
         return '/usr/bin/bash' if Path('/usr/bin/bash').is_file() else '/bin/bash'
 
     def sanitize_label(self, label: str) -> str:
@@ -76,7 +80,7 @@ class EnvironmentAdapter:
         if system == 'linux':
             return [self.resolve_bash(), shell_flag]
 
-        shell = (config.custom_shell or '').strip()
+        shell = (getattr(config, 'shell_executable', None) or getattr(config, 'custom_shell', None) or '').strip()
         if system == 'wsl':
             if not shell:
                 return [self.resolve_bash(), shell_flag]

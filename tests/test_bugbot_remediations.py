@@ -7,6 +7,8 @@ from app.core.campaign_manager import CampaignManager, read_controldict_endtime,
 from app.core.environment_adapter import EnvironmentAdapter
 from app.core.parameter_loader import LoadedParameters, ParameterLoader
 from app.core.preflight_validator import PreflightReport, PreflightValidator
+from app.core.runner import Runner
+from app.gui.tabs_monitor import MonitorTab
 from app.models.case_definition import CaseDefinition
 from app.models.project_config import ProjectConfig
 from app.models.run_status import RunStatus
@@ -75,6 +77,11 @@ def test_solver_override_preserves_wrappers():
     config2 = ProjectConfig(internal_stage_commands=["runApplication customSolver"])
     cmds2 = manager._stage_commands(case, config2)
     assert cmds2 == ["runApplication interFoam"]
+
+    # Test complex mpirun flags
+    config3 = ProjectConfig(internal_stage_commands=["mpirun -np 4 --bind-to core -x OMP_NUM_THREADS=1 mySolver -parallel"])
+    cmds3 = manager._stage_commands(case, config3)
+    assert cmds3 == ["mpirun -np 4 --bind-to core -x OMP_NUM_THREADS=1 interFoam -parallel"]
 
 
 def test_secondary_events_merged_across_whitespace_case_names():
@@ -204,3 +211,30 @@ def test_pending_cancellation_not_cleared_by_campaign_manager():
         assert manager.runner.is_interrupted is True
         # Since it was interrupted before starting any cases, 0 cases ran
         assert len(manager.statuses) == 0
+
+
+def test_runner_detects_fatal_output_with_zero_exit_code():
+    runner = Runner()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        case_dir = Path(tmpdir)
+        (case_dir / "logs").mkdir()
+        config = ProjectConfig()
+        # Script echoes FOAM FATAL ERROR and exits 0
+        cmd_seq = [{"phase": "run", "label": "fatalTest", "command": "echo '--> FOAM FATAL ERROR: test error' && exit 0"}]
+        res = runner.run_command_sequence(case_dir, cmd_seq, config, "case_test")
+        assert res.status.status == "error"
+        assert res.status.error_type == "solver_error"
+        assert "test error" in str(res.status.error_message)
+
+
+def test_monitor_tab_previews_cached_timestep_in_iteration_mode():
+    from PySide6.QtWidgets import QApplication
+    _app = QApplication.instance() or QApplication(['-platform', 'offscreen'])
+    monitor = MonitorTab()
+    monitor.set_plot_config(time_stride=0.0, iteration_stride=1)
+    batch = [{"equation": "Ux", "value": 0.05, "source_log": "log", "time": 0.1}]
+    monitor.ingest_residual_batch(batch)
+    # _preview_point must return the cached point even when using_time_axis is False
+    preview = monitor._preview_point("Ux")
+    assert preview is not None
+    assert preview[1] == 0.05

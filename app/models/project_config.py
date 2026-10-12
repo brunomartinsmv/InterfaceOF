@@ -29,6 +29,10 @@ class ProjectConfig:
     plot_time_stride: float = 0.0
     plot_iteration_stride: int = 1
 
+    @property
+    def custom_shell(self) -> str:
+        return self.shell_executable
+
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         for key, value in list(payload.items()):

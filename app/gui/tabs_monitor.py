@@ -270,14 +270,16 @@ class MonitorTab(QWidget):
         self._dirty_table = False
 
     def _preview_point(self, equation: str) -> tuple[float, float] | None:
-        if self._using_time_axis():
-            cache = self._residual_timestep_cache.get(equation)
-            if cache:
-                latest_time_str = list(cache.keys())[-1]
-                try:
-                    return (float(latest_time_str), cache[latest_time_str])
-                except ValueError:
-                    pass
+        cache = self._residual_timestep_cache.get(equation)
+        if cache:
+            latest_time_str = list(cache.keys())[-1]
+            try:
+                val = cache[latest_time_str]
+                if self._using_time_axis():
+                    return (float(latest_time_str), val)
+                return (float(self._plotted_count_by_eq[equation] + 1), val)
+            except ValueError:
+                pass
         return self._pending_preview_point.get(equation)
 
     def _refresh_plot(self) -> None:
