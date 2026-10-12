@@ -182,8 +182,8 @@ class CampaignManager:
         self.preflight_report: PreflightReport | None = None
         self.statuses: list[RunStatus] = []
 
-    def stop(self) -> None:
-        self.runner.stop_case()
+    def stop(self, *, blocking: bool = False) -> None:
+        self.runner.stop_case(blocking=blocking)
 
     def reset_stop(self) -> None:
         self.runner.reset_interrupted()

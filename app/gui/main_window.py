@@ -71,7 +71,7 @@ class CampaignWorker(QObject):
             self._flush_residuals()
             self.finished.emit(str(campaign_dir))
         except Exception as exc:  # noqa: BLE001
-            self.manager.stop()
+            self.manager.stop(blocking=True)
             self._flush_residuals()
             self.failed.emit(str(exc))
 
@@ -115,7 +115,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self.worker_thread is not None and self.worker_thread.isRunning():
-            self.manager.stop()
+            self.manager.stop(blocking=True)
             self.worker_thread.quit()
             if not self.worker_thread.wait(3000):
                 self.worker_thread.terminate()

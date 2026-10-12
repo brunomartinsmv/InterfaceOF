@@ -278,5 +278,7 @@ class Runner:
 
         if blocking:
             _escalate()
-        else:
-            threading.Thread(target=_escalate, daemon=True).start()
+            return
+        # A thread não-daemon continua o SIGKILL se o interpretador encerrar
+        # antes do fim da espera (fechar a janela logo após Parar).
+        threading.Thread(target=_escalate, daemon=False, name='runner-stop').start()

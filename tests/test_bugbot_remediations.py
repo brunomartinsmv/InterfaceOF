@@ -322,3 +322,159 @@ def test_campaign_manager_preserves_negative_last_simulated_time():
         cmd_seq = [{"phase": "run", "label": "negTime", "command": cmd}]
         res = manager.runner.run_command_sequence(case_dir, cmd_seq, config, "case_test")
         assert res.status.last_simulated_time == -1.0
+
+
+def test_blocking_stop_reaps_process_that_ignores_sigterm():
+    import subprocess
+    import sys
+    import time
+
+    runner = Runner()
+    ready = Path(tempfile.mkdtemp()) / "ready"
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import pathlib, signal, sys, time\n"
+            "path = pathlib.Path(sys.argv[1])\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "path.write_text('ignoring')\n"
+            "time.sleep(30)\n",
+            str(ready),
+        ],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.is_file() or ready.read_text(encoding="utf-8") != "ignoring":
+            if time.monotonic() > deadline:
+                raise AssertionError("process did not install the SIGTERM handler")
+            time.sleep(0.02)
+        runner._process = proc
+        started = time.monotonic()
+        runner.stop_case(wait_timeout=0.2, blocking=True)
+        elapsed = time.monotonic() - started
+        assert proc.poll() is not None
+        assert elapsed >= 0.15
+        assert elapsed < 2.5
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=2)
+
+
+def test_nonblocking_stop_escalates_on_a_nondaemon_thread():
+    import subprocess
+    import sys
+    import threading
+    import time
+
+    runner = Runner()
+    ready = Path(tempfile.mkdtemp()) / "ready"
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import pathlib, signal, sys, time\n"
+            "path = pathlib.Path(sys.argv[1])\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "path.write_text('ignoring')\n"
+            "time.sleep(30)\n",
+            str(ready),
+        ],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.is_file() or ready.read_text(encoding="utf-8") != "ignoring":
+            if time.monotonic() > deadline:
+                raise AssertionError("process did not install the SIGTERM handler")
+            time.sleep(0.02)
+        runner._process = proc
+        started = time.monotonic()
+        runner.stop_case(wait_timeout=0.2, blocking=False)
+        assert time.monotonic() - started < 0.2
+        stop_threads = [thread for thread in threading.enumerate() if thread.name == "runner-stop"]
+        assert stop_threads
+        assert stop_threads[0].daemon is False
+        proc.wait(timeout=3)
+        assert proc.poll() is not None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=2)
+
+
+def test_close_event_stops_the_solver_on_the_calling_thread():
+    from PySide6.QtGui import QCloseEvent
+    from PySide6.QtWidgets import QApplication
+
+    from app.gui.main_window import MainWindow
+
+    _app = QApplication.instance() or QApplication(["-platform", "offscreen"])
+    window = MainWindow()
+    calls: list[bool] = []
+
+    def fake_stop(*, blocking: bool = False) -> None:
+        calls.append(blocking)
+
+    window.manager.stop = fake_stop  # type: ignore[method-assign]
+
+    class _RunningThread:
+        def isRunning(self) -> bool:
+            return True
+
+        def quit(self) -> None:
+            return None
+
+        def wait(self, _timeout: int = 0) -> bool:
+            return True
+
+        def terminate(self) -> None:
+            return None
+
+    window.worker_thread = _RunningThread()  # type: ignore[assignment]
+    window.closeEvent(QCloseEvent())
+    assert calls == [True]
+    window.worker_thread = None
+    window.close()
+
+
+def test_campaign_aggregation_keeps_negative_simulated_time(monkeypatch):
+    from app.core.runner import RunnerResult
+
+    manager = CampaignManager()
+
+    def fake_run(*_args, **kwargs):
+        status = RunStatus(
+            case_name=kwargs.get("case_name", "case_neg"),
+            status="completed",
+            last_simulated_time=-2.0,
+        )
+        return RunnerResult(return_code=0, status=status)
+
+    monkeypatch.setattr(manager.runner, "run_command_sequence", fake_run)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir) / "base"
+        (base_dir / "system").mkdir(parents=True)
+        (base_dir / "system" / "controlDict").write_text("endTime 1;\n", encoding="utf-8")
+        (base_dir / "-1").mkdir()
+        primary_csv = Path(tmpdir) / "cases.csv"
+        primary_csv.write_text("nome_do_caso\ncase_neg\n", encoding="utf-8")
+        manager.run_campaign(
+            ProjectConfig(
+                base_case_dir=base_dir,
+                primary_csv=primary_csv,
+                output_dir=Path(tmpdir) / "output",
+                internal_setup_commands=[],
+                internal_stage_commands=["echo ok"],
+                internal_post_commands=[],
+            )
+        )
+
+    assert manager.statuses[0].last_simulated_time == -1.0
